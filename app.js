@@ -1,4 +1,6 @@
 import { createBackup, parseBackup } from './backup.js';
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './sync-config.js';
+import { MoneyNoteSync, diffRecords, LOCAL_DIRTY_KEY } from './sync.js';
 
 const STORAGE_KEY = 'moneynote.v1';
 const palette = ['#c95772', '#e58fa2', '#f4b2bd', '#eeaa8c', '#b5a0ce', '#dfc27c', '#9db9ad', '#c3cfaa'];
@@ -46,14 +48,93 @@ function loadState() {
 }
 
 let state = loadState();
+let lastSavedState = structuredClone(state);
 let selectedMonth = currentMonth();
 let activeView = 'overview';
 let toastTimer;
 let pendingRestore;
+let sync;
+let supabaseClient;
+let sessionUser;
+let connectingUserId;
 
 function saveState() {
+  const changes = diffRecords(lastSavedState, state);
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-  catch { toast('Không thể lưu trên thiết bị. Hãy xuất CSV để giữ dữ liệu.'); }
+  catch { toast('Không thể lưu trên thiết bị. Hãy sao lưu JSON để giữ dữ liệu.'); return false; }
+  lastSavedState = structuredClone(state);
+  if (sync?.active) sync.queueChanges(changes);
+  else if (changes.length && SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY) {
+    try { localStorage.setItem(LOCAL_DIRTY_KEY, '1'); } catch { toast('Không thể đánh dấu thay đổi chưa đồng bộ'); }
+  }
+  return true;
+}
+
+function acceptRemoteState(next) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
+  catch { throw new Error('Không thể lưu dữ liệu đám mây trên thiết bị'); }
+  state = next;
+  lastSavedState = structuredClone(next);
+  render();
+}
+
+function setSyncStatus(message) {
+  $('#sync-status').textContent = message;
+  $('#sync-dialog-status').textContent = message;
+  $('#storage-caption').textContent = message;
+  $('#sync-status-button').title = message;
+}
+
+function updateSyncDialog() {
+  const configured = !!SUPABASE_URL && !!SUPABASE_PUBLISHABLE_KEY;
+  $('#sync-help').textContent = !configured
+    ? 'Chưa cấu hình Supabase. Tạo dự án, chạy tệp supabase/schema.sql rồi điền Project URL và publishable key vào sync-config.js. Xem README để làm từng bước.'
+    : sessionUser ? `Đang đăng nhập: ${sessionUser.email || 'tài khoản Supabase'}. Thay đổi được lưu trên thiết bị trước, rồi gửi lên đám mây khi có mạng.`
+      : 'Nhập email để nhận liên kết đăng nhập. Dùng cùng email trên điện thoại và máy tính để xem chung dữ liệu.';
+  $('#sync-login-form').hidden = !configured || !!sessionUser;
+  $('#sync-refresh').hidden = !sessionUser;
+  $('#sync-logout').hidden = !sessionUser;
+}
+
+function chooseInitialData(local, remoteRows, { differentAccount } = {}) {
+  return new Promise((resolve) => {
+    const dialog = $('#sync-choice-dialog');
+    $('#sync-choice-summary').textContent = `Thiết bị này có ${local.transactions.length} giao dịch. Đám mây có ${remoteRows.filter((row) => row.kind === 'transaction' && !row.deleted).length} giao dịch.${differentAccount ? ' Dữ liệu trên thiết bị có thể thuộc tài khoản đã đăng nhập trước đó.' : ''} Chọn cách kết nối trước khi đồng bộ.`;
+    const finish = (choice) => { dialog.close(); dialog.oncancel = null; resolve(choice); };
+    $('#sync-choice-backup').onclick = exportBackup;
+    $('#sync-choice-cancel').onclick = () => finish('cancel');
+    $('#sync-choice-cloud').onclick = () => finish('cloud');
+    $('#sync-choice-merge').onclick = () => finish('merge');
+    dialog.oncancel = (event) => { event.preventDefault(); finish('cancel'); };
+    dialog.showModal();
+  });
+}
+
+async function handleSession(session) {
+  const user = session?.user;
+  if (!user) {
+    if (sessionUser) sync?.signOut();
+    sessionUser = null;
+    updateSyncDialog();
+    return;
+  }
+  if (sessionUser?.id === user.id && (sync?.active || connectingUserId === user.id)) return;
+  sessionUser = user;
+  updateSyncDialog();
+  connectingUserId = user.id;
+  try { await sync?.start(user.id); }
+  finally { if (connectingUserId === user.id) connectingUserId = null; }
+}
+
+async function initializeSync() {
+  updateSyncDialog();
+  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) return;
+  try {
+    const { createClient } = await import('./vendor/supabase.js');
+    supabaseClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+    sync = new MoneyNoteSync({ client: supabaseClient, storage: localStorage, defaults: defaultCategories, getState: () => state, acceptState: acceptRemoteState, chooseInitialData, setStatus: setSyncStatus });
+    supabaseClient.auth.onAuthStateChange((_event, session) => { setTimeout(() => handleSession(session), 0); });
+  } catch (error) { setSyncStatus(`Không thể khởi tạo đồng bộ: ${error.message}`); }
 }
 
 function toast(message) {
@@ -289,6 +370,7 @@ document.addEventListener('click', (event) => {
   }
   if (target.hasAttribute('data-backup')) exportBackup();
   if (target.hasAttribute('data-restore')) $('#backup-file').click();
+  if (target.hasAttribute('data-sync-open')) { updateSyncDialog(); $('#sync-dialog').showModal(); }
 });
 
 $('#backup-file').addEventListener('change', async (event) => {
@@ -301,6 +383,9 @@ $('#backup-file').addEventListener('change', async (event) => {
     const { transactions, categories, budgets } = pendingRestore.data;
     const exportedAt = new Date(pendingRestore.exportedAt).toLocaleString('vi-VN');
     $('#restore-summary').textContent = `Bản sao lưu ngày ${exportedAt}: ${transactions.length} giao dịch, ${categories.length} danh mục và ${Object.keys(budgets).length} tháng ngân sách.`;
+    $('#restore-dialog .restore-warning').textContent = sync?.active
+      ? 'Bản sao lưu sẽ thay thế dữ liệu trên thiết bị này và các mục thay đổi sẽ được đồng bộ lên đám mây. Hãy sao lưu dữ liệu hiện tại trước khi tiếp tục.'
+      : 'Dữ liệu trên thiết bị này sẽ được thay thế. Hãy sao lưu dữ liệu hiện tại trước khi tiếp tục.';
     $('#restore-dialog').showModal();
   } catch (error) {
     pendingRestore = undefined;
@@ -310,9 +395,9 @@ $('#backup-file').addEventListener('change', async (event) => {
 
 $('#confirm-restore').addEventListener('click', () => {
   if (!pendingRestore) return;
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(pendingRestore.data)); }
-  catch { toast('Không thể lưu bản khôi phục trên thiết bị này'); return; }
+  const previous = state;
   state = pendingRestore.data;
+  if (!saveState()) { state = previous; toast('Không thể lưu bản khôi phục trên thiết bị này'); return; }
   pendingRestore = undefined;
   $('#restore-dialog').close();
   selectedMonth = state.transactions.length ? state.transactions.reduce((latest, item) => item.date > latest ? item.date : latest, '').slice(0, 7) : currentMonth();
@@ -323,6 +408,37 @@ $('#confirm-restore').addEventListener('click', () => {
   render();
   toast('Đã khôi phục toàn bộ dữ liệu');
 });
+
+$('#sync-login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!supabaseClient) return;
+  const button = $('#sync-login-button');
+  button.disabled = true;
+  try {
+    const email = $('#sync-email').value.trim();
+    const redirect = new URL(location.pathname, location.origin).href;
+    const { error } = await supabaseClient.auth.signInWithOtp({ email, options: { emailRedirectTo: redirect } });
+    if (error) throw error;
+    toast('Đã gửi liên kết đăng nhập. Hãy kiểm tra email.');
+    $('#sync-dialog').close();
+  } catch (error) { toast(`Không gửi được liên kết: ${error.message}`); }
+  finally { button.disabled = false; }
+});
+
+$('#sync-refresh').addEventListener('click', () => { if (sync?.active) sync.syncNow(); else if (sessionUser) sync?.start(sessionUser.id); });
+$('#sync-logout').addEventListener('click', async () => {
+  if (!supabaseClient) return;
+  const { error } = await supabaseClient.auth.signOut();
+  if (error) { toast(`Không thể đăng xuất: ${error.message}`); return; }
+  sync?.signOut();
+  sessionUser = null;
+  updateSyncDialog();
+  toast('Đã đăng xuất; dữ liệu vẫn còn trên thiết bị này');
+});
+
+window.addEventListener('online', () => { if (sync?.active) sync.syncNow(); else if (sessionUser) sync?.start(sessionUser.id); });
+window.addEventListener('offline', () => { if (sync?.active) setSyncStatus(`Ngoại tuyến${sync.queue.size ? ` · ${sync.queue.size} thay đổi chờ gửi` : ''}`); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (sync?.active) sync.syncNow(); else if (sessionUser && navigator.onLine) sync?.start(sessionUser.id); } });
 
 $('#restore-dialog').addEventListener('close', () => { pendingRestore = undefined; });
 
@@ -385,4 +501,5 @@ window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
 
 setView(location.hash.slice(1) || 'overview');
 render();
+initializeSync();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));

@@ -1,0 +1,27 @@
+{
+  "name": "moneynote",
+  "version": "1.0.0",
+  "description": "PWA quản lý thu chi cá nhân, chạy trên Android và trình duyệt Windows.",
+  "scripts": {
+    "test": "node --test",
+    "build:vendor": "esbuild node_modules/@supabase/supabase-js/dist/index.mjs --bundle --format=esm --platform=browser --minify --outfile=vendor/supabase.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sonnch97/money_note.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/sonnch97/money_note/issues"
+  },
+  "homepage": "https://github.com/sonnch97/money_note#readme",
+  "dependencies": {
+    "@supabase/supabase-js": "2.118.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
