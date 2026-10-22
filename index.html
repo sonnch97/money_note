@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#153b36" />
+    <meta name="description" content="MoneyNote giúp bạn ghi thu chi, theo dõi ngân sách và hiểu dòng tiền của mình." />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>MoneyNote · Quản lý chi tiêu</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Điều hướng chính">
+        <a class="brand" href="#overview" aria-label="MoneyNote, về tổng quan">
+          <span class="brand-mark" aria-hidden="true">↗</span>
+          <span>money<span class="brand-accent">note</span><small>PERSONAL FINANCE</small></span>
+        </a>
+        <div class="sidebar-group-label">KHÔNG GIAN CỦA BẠN</div>
+        <nav class="desktop-nav" aria-label="Các trang">
+          <button class="nav-item active" data-view="overview"><span class="nav-icon">◫</span> Tổng quan</button>
+          <button class="nav-item" data-view="transactions"><span class="nav-icon">⇄</span> Giao dịch</button>
+          <button class="nav-item" data-view="budgets"><span class="nav-icon">◴</span> Ngân sách</button>
+          <button class="nav-item" data-view="categories"><span class="nav-icon">▦</span> Danh mục</button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="privacy-note"><span>✦</span><div><strong>Dữ liệu của bạn</strong><small>Được lưu trên thiết bị này</small></div></div>
+          <button class="sidebar-export" data-backup>↓ Sao lưu toàn bộ JSON</button>
+          <button class="sidebar-export" data-restore>↑ Khôi phục từ JSON</button>
+          <button id="sidebar-export" class="sidebar-export">↓ Xuất giao dịch CSV</button>
+        </div>
+      </aside>
+
+      <div class="main-wrap">
+        <header class="topbar">
+          <div class="mobile-brand"><span class="brand-mark">↗</span><strong>moneynote</strong></div>
+          <div class="breadcrumb">TÀI CHÍNH CÁ NHÂN <span>/</span> <strong id="breadcrumb-current">Tổng quan</strong></div>
+          <div class="topbar-actions">
+            <label class="month-picker"><span>◷</span><span class="sr-only">Chọn tháng</span><input id="month-input" type="month" /></label>
+            <button class="button button-primary top-add" data-add>＋ <span>Thêm giao dịch</span></button>
+          </div>
+        </header>
+
+        <main id="main-content">
+          <section id="overview" class="view active" aria-labelledby="overview-title">
+            <div class="page-heading"><div><p class="eyebrow">BẢNG ĐIỀU KHIỂN</p><h1 id="overview-title">Tổng quan tài chính</h1><p class="subtitle">Một góc nhìn rõ ràng về tiền của bạn trong <span data-month-label></span>.</p></div><button class="button button-outline heading-add" data-add>＋ Ghi giao dịch</button></div>
+            <div class="summary-grid">
+              <article class="summary-card balance-card"><div class="card-top"><span>TIỀN CÒN LẠI</span><span class="card-symbol">↗</span></div><strong id="balance-total">0 ₫</strong><p>Thu nhập trừ chi tiêu trong tháng</p></article>
+              <article class="summary-card"><div class="card-top"><span>THU NHẬP</span><span class="metric-icon income">↙</span></div><strong id="income-total">0 ₫</strong><p><span id="income-count">0</span> giao dịch thu</p></article>
+              <article class="summary-card"><div class="card-top"><span>CHI TIÊU</span><span class="metric-icon expense">↗</span></div><strong id="expense-total">0 ₫</strong><p><span id="expense-count">0</span> giao dịch chi</p></article>
+            </div>
+            <div class="dashboard-grid">
+              <section class="panel cashflow-panel"><div class="panel-heading"><div><p class="eyebrow">XU HƯỚNG</p><h2>Dòng tiền 6 tháng</h2></div><div class="legend"><span><i class="legend-dot legend-income"></i> Thu</span><span><i class="legend-dot legend-expense"></i> Chi</span></div></div><div id="cashflow-chart" class="cashflow-chart" aria-label="Biểu đồ thu chi 6 tháng"></div></section>
+              <section class="panel spend-panel"><div class="panel-heading"><div><p class="eyebrow">PHÂN BỔ</p><h2>Chi tiêu theo danh mục</h2></div></div><div id="category-chart" class="category-chart"></div></section>
+            </div>
+            <div class="dashboard-grid lower-grid">
+              <section class="panel"><div class="panel-heading"><div><p class="eyebrow">KẾ HOẠCH</p><h2>Ngân sách tháng</h2></div><button class="text-link" data-view="budgets">Xem chi tiết →</button></div><div id="overview-budget"></div></section>
+              <section class="panel"><div class="panel-heading"><div><p class="eyebrow">HOẠT ĐỘNG</p><h2>Giao dịch gần đây</h2></div><button class="text-link" data-view="transactions">Xem tất cả →</button></div><div id="recent-transactions"></div></section>
+            </div>
+          </section>
+
+          <section id="transactions" class="view" aria-labelledby="transactions-title">
+            <div class="page-heading"><div><p class="eyebrow">NHẬT KÝ</p><h1 id="transactions-title">Giao dịch</h1><p class="subtitle">Tìm lại mọi khoản thu chi trong <span data-month-label></span>.</p></div><button class="button button-primary heading-add" data-add>＋ Thêm giao dịch</button></div>
+            <div class="panel transactions-panel"><div class="filter-row"><label class="search-field"><span>⌕</span><input id="search-input" type="search" placeholder="Tìm theo ghi chú hoặc danh mục..." autocomplete="off" /></label><select id="type-filter" aria-label="Lọc loại giao dịch"><option value="all">Tất cả loại</option><option value="expense">Khoản chi</option><option value="income">Khoản thu</option></select><select id="category-filter" aria-label="Lọc danh mục"><option value="all">Tất cả danh mục</option></select><button id="export-filtered" class="button button-outline">↓ Xuất CSV</button></div><div class="list-heading"><strong id="transaction-count">0 giao dịch</strong><span>Trong tháng đã chọn</span></div><div id="transaction-list"></div><div class="data-footer"><span>Để chuyển sang thiết bị hoặc địa chỉ web khác, hãy sao lưu JSON rồi khôi phục tại nơi mới. File CSV chỉ chứa giao dịch.</span><div class="data-actions"><button class="text-link" data-backup>Sao lưu JSON</button><button class="text-link" data-restore>Khôi phục JSON</button><button id="export-all" class="text-link">Xuất CSV</button></div></div></div>
+          </section>
+
+          <section id="budgets" class="view" aria-labelledby="budgets-title">
+            <div class="page-heading"><div><p class="eyebrow">KẾ HOẠCH</p><h1 id="budgets-title">Ngân sách tháng</h1><p class="subtitle">Đặt giới hạn để chi tiêu có chủ đích trong <span data-month-label></span>.</p></div></div>
+            <div class="budget-layout"><section class="panel budget-main"><div class="panel-heading"><div><p class="eyebrow">TỔNG NGÂN SÁCH</p><h2>Giới hạn chi tiêu</h2></div><span class="panel-icon">◴</span></div><form id="total-budget-form" class="budget-form"><label for="total-budget-input">Ngân sách tháng (₫)</label><div class="inline-form"><input id="total-budget-input" type="number" min="0" step="1000" inputmode="numeric" placeholder="Ví dụ: 10.000.000" /><button class="button button-primary" type="submit">Lưu ngân sách</button></div></form><div id="total-budget-progress"></div></section><section class="panel budget-side"><p class="eyebrow">GỢI Ý NHỎ</p><h2>Chi tiêu chủ động hơn</h2><p>Đặt ngân sách riêng cho những danh mục dễ vượt mức. Bạn có thể sửa bất kỳ lúc nào; số tiền đã chi sẽ được cập nhật tự động.</p><span class="tip-illustration" aria-hidden="true">◎</span></section></div>
+            <section class="panel category-budget-panel"><div class="panel-heading"><div><p class="eyebrow">CHI TIẾT</p><h2>Ngân sách theo danh mục</h2></div></div><div id="category-budgets"></div></section>
+          </section>
+
+          <section id="categories" class="view" aria-labelledby="categories-title">
+            <div class="page-heading"><div><p class="eyebrow">TỔ CHỨC</p><h1 id="categories-title">Danh mục</h1><p class="subtitle">Sắp xếp giao dịch theo cách phù hợp với bạn.</p></div><button id="add-category" class="button button-primary heading-add">＋ Thêm danh mục</button></div>
+            <div class="category-layout"><section class="panel"><div class="panel-heading"><div><p class="eyebrow">KHOẢN CHI</p><h2>Danh mục chi tiêu</h2></div></div><div id="expense-categories"></div></section><section class="panel"><div class="panel-heading"><div><p class="eyebrow">KHOẢN THU</p><h2>Danh mục thu nhập</h2></div></div><div id="income-categories"></div></section></div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <nav class="mobile-nav" aria-label="Điều hướng trên điện thoại"><button class="active" data-view="overview"><span>◫</span>Tổng quan</button><button data-view="transactions"><span>⇄</span>Giao dịch</button><button class="mobile-add" data-add aria-label="Thêm giao dịch">＋</button><button data-view="budgets"><span>◴</span>Ngân sách</button><button data-view="categories"><span>▦</span>Danh mục</button></nav>
+
+    <dialog id="transaction-dialog" class="dialog"><form id="transaction-form"><div class="dialog-heading"><div><p class="eyebrow">GHI CHÉP NHANH</p><h2 id="transaction-dialog-title">Thêm giao dịch</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng">×</button></div><div class="segmented" role="group" aria-label="Loại giao dịch"><button type="button" class="active" data-transaction-type="expense">↗ Khoản chi</button><button type="button" data-transaction-type="income">↙ Khoản thu</button></div><input id="transaction-type" type="hidden" value="expense" /><input id="transaction-id" type="hidden" /><label class="form-field amount-field"><span>Số tiền (₫)</span><input id="transaction-amount" type="text" inputmode="numeric" autocomplete="off" pattern="[0-9.]*" placeholder="0" required /></label><div class="form-grid"><label class="form-field"><span>Danh mục</span><select id="transaction-category" required></select></label><label class="form-field"><span>Ngày</span><input id="transaction-date" type="date" required /></label></div><label class="form-field"><span>Ghi chú <small>(không bắt buộc)</small></span><input id="transaction-note" type="text" maxlength="120" placeholder="Ví dụ: Ăn trưa cùng bạn bè" /></label><div class="dialog-actions"><button type="button" class="button button-outline" data-close>Hủy</button><button type="submit" class="button button-primary">Lưu giao dịch</button></div></form></dialog>
+    <dialog id="category-dialog" class="dialog"><form id="category-form"><div class="dialog-heading"><div><p class="eyebrow">TÙY CHỈNH</p><h2 id="category-dialog-title">Thêm danh mục</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng">×</button></div><input id="category-id" type="hidden" /><label class="form-field"><span>Tên danh mục</span><input id="category-name" type="text" maxlength="32" placeholder="Ví dụ: Thú cưng" required /></label><label class="form-field"><span>Loại</span><select id="category-type"><option value="expense">Khoản chi</option><option value="income">Khoản thu</option></select></label><label class="form-field"><span>Biểu tượng</span><select id="category-icon"><option value="◈">◈ Khác</option><option value="●">● Tròn</option><option value="◕">◕ Ăn uống</option><option value="⌂">⌂ Nhà cửa</option><option value="✦">✦ Sở thích</option><option value="✚">✚ Sức khỏe</option><option value="▣">▣ Mua sắm</option><option value="◎">◎ Di chuyển</option><option value="♧">♧ Giáo dục</option><option value="↗">↗ Thu nhập</option></select></label><div class="dialog-actions"><button type="button" class="button button-outline" data-close>Hủy</button><button type="submit" class="button button-primary">Lưu danh mục</button></div></form></dialog>
+    <input id="backup-file" class="sr-only" type="file" accept=".json,application/json" aria-label="Chọn tệp sao lưu JSON" />
+    <dialog id="restore-dialog" class="dialog" aria-labelledby="restore-title"><div class="dialog-heading"><div><p class="eyebrow">KHÔI PHỤC DỮ LIỆU</p><h2 id="restore-title">Kiểm tra bản sao lưu</h2></div><button type="button" class="icon-button" data-close aria-label="Đóng">×</button></div><p id="restore-summary" class="restore-summary"></p><p class="restore-warning">Dữ liệu trên thiết bị này sẽ được thay thế. Hãy sao lưu dữ liệu hiện tại trước khi tiếp tục.</p><div class="dialog-actions"><button type="button" class="button button-outline" data-close>Hủy</button><button id="confirm-restore" type="button" class="button button-primary">Khôi phục và thay thế</button></div></dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
