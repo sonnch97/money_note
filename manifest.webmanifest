@@ -1,6 +1,6 @@
 {
-  "name": "MoneyNote - Quản lý chi tiêu",
-  "short_name": "MoneyNote",
+  "name": "Money Note - Quản lý chi tiêu",
+  "short_name": "Money Note",
   "description": "Ghi thu chi, theo dõi ngân sách và hiểu dòng tiền của bạn.",
   "start_url": "./",
   "scope": "./",

@@ -2,6 +2,7 @@ import { createBackup, parseBackup } from './backup.js';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './sync-config.js';
 import { MoneyNoteSync, diffRecords, LOCAL_DIRTY_KEY } from './sync.js';
 import { budgetAlerts, dueRecurring, filterTransactions } from './features.js';
+import { APP_VERSION } from './version.js';
 
 const STORAGE_KEY = 'moneynote.v1';
 const palette = ['#c95772', '#e58fa2', '#f4b2bd', '#eeaa8c', '#b5a0ce', '#dfc27c', '#9db9ad', '#c3cfaa'];
@@ -672,6 +673,7 @@ $('#export-filtered').addEventListener('click', () => exportCsv(filteredTransact
 for (const dialog of $$('dialog')) dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
 window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
 
+$$('[data-app-version]').forEach((element) => { element.textContent = `v${APP_VERSION}`; });
 setView(location.hash.slice(1) || 'overview');
 render();
 initializeSync();

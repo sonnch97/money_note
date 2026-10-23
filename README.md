@@ -1,6 +1,8 @@
-# MoneyNote
+# Money Note
 
 PWA quản lý thu chi chạy trên Android và trình duyệt Windows. Trang tĩnh có thể host bằng GitHub Pages. Ứng dụng lưu dữ liệu trên thiết bị để dùng ngoại tuyến; có thể bật Supabase để đồng bộ giữa các thiết bị.
+
+Phiên bản đang chạy hiện dưới logo trên máy tính và cạnh logo trên điện thoại. Khi phát hành một bản mới, tăng `APP_VERSION` trong [version.js](version.js), cập nhật phiên bản trong `package.json` và đổi tên cache trong [sw.js](sw.js). Sau khi GitHub Pages cập nhật, tải lại trang để đối chiếu mã phiên bản mới.
 
 ## Tính năng
 
