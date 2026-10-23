@@ -7,3 +7,4 @@ dist/
 !.env.example
 moneynote-sao-luu-*.json
 docs/
+previews/

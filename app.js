@@ -5,7 +5,7 @@ import { budgetAlerts, dueRecurring, filterTransactions } from './features.js';
 import { APP_VERSION } from './version.js';
 
 const STORAGE_KEY = 'moneynote.v1';
-const palette = ['#c95772', '#e58fa2', '#f4b2bd', '#eeaa8c', '#b5a0ce', '#dfc27c', '#9db9ad', '#c3cfaa'];
+const palette = ['#d16d8b', '#f2ae8f', '#99cc7a', '#dce7d6', '#b5a0ce', '#dfc27c', '#9db9ad', '#c3cfaa'];
 const defaultCategories = [
   { id: 'food', name: 'Ăn uống', type: 'expense', icon: '◕' },
   { id: 'shopping', name: 'Mua sắm', type: 'expense', icon: '▣' },
@@ -25,6 +25,9 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const money = (value) => `${new Intl.NumberFormat('vi-VN').format(value || 0)} ₫`;
 const compactMoney = (value) => value >= 1000000 ? `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 }).format(value / 1000000)}tr` : value >= 1000 ? `${Math.round(value / 1000)}k` : `${value || 0}₫`;
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+const iconSvg = (name) => `<svg class="ui-icon" aria-hidden="true"><use href="#icon-${name}" /></svg>`;
+const categoryIconNames = { '◕': 'food', '▣': 'shopping', '⌂': 'home', '◎': 'transport', '✚': 'health', '♧': 'learning', '✦': 'sparkle', '◈': 'diamond', '●': 'circle', '↗': 'arrow-up-right' };
+const categoryIconHtml = (value) => categoryIconNames[value || '◈'] ? iconSvg(categoryIconNames[value || '◈']) : `<span class="category-glyph">${escapeHtml(value)}</span>`;
 const todayLocal = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
 const currentMonth = () => todayLocal().slice(0, 7);
 const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T12:00:00Z`).getTime()) && new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) === value;
@@ -237,9 +240,9 @@ function transactionHtml(item, actions = false) {
   const detail = [category?.name || 'Danh mục đã xóa', dateName(item.date)].join(' · ');
   const savedAsTemplate = state.templates.some((template) => template.type === item.type && template.amount === item.amount && template.categoryId === item.categoryId && template.note === (item.note || ''));
   const saveButton = savedAsTemplate
-    ? '<span class="template-saved" aria-label="Đã lưu làm mẫu nhanh" title="Đã lưu làm mẫu nhanh">★ <span>Mẫu</span></span>'
-    : `<button class="template-save-button" data-save-template="${escapeHtml(item.id)}" aria-label="Lưu giao dịch thành mẫu nhanh" title="Lưu thành mẫu nhanh">☆ <span>Mẫu</span></button>`;
-  return `<div class="${actions ? 'transaction-item' : 'recent-item'}"><span class="category-badge ${item.type === 'income' ? 'income' : ''}" aria-hidden="true">${escapeHtml(category?.icon || '◈')}</span><div class="transaction-info"><strong>${escapeHtml(item.note || category?.name || 'Giao dịch')}</strong><span>${escapeHtml(detail)}</span></div><strong class="transaction-amount ${item.type}">${item.type === 'income' ? '+' : '−'}${money(item.amount)}</strong>${actions ? `<div class="transaction-actions">${saveButton}<button class="icon-action" data-edit-transaction="${escapeHtml(item.id)}" aria-label="Sửa giao dịch">✎</button><button class="icon-action" data-delete-transaction="${escapeHtml(item.id)}" aria-label="Xóa giao dịch">×</button></div>` : saveButton}</div>`;
+    ? `<span class="template-saved" aria-label="Đã lưu làm mẫu nhanh" title="Đã lưu làm mẫu nhanh">${iconSvg('star')}<span>Mẫu</span></span>`
+    : `<button class="template-save-button" data-save-template="${escapeHtml(item.id)}" aria-label="Lưu giao dịch thành mẫu nhanh" title="Lưu thành mẫu nhanh">${iconSvg('star')}<span>Mẫu</span></button>`;
+  return `<div class="${actions ? 'transaction-item' : 'recent-item'}"><span class="category-badge ${item.type === 'income' ? 'income' : ''}" aria-hidden="true">${categoryIconHtml(category?.icon)}</span><div class="transaction-info"><strong>${escapeHtml(item.note || category?.name || 'Giao dịch')}</strong><span>${escapeHtml(detail)}</span></div><strong class="transaction-amount ${item.type}">${item.type === 'income' ? '+' : '−'}${money(item.amount)}</strong>${actions ? `<div class="transaction-actions">${saveButton}<button class="icon-action" data-edit-transaction="${escapeHtml(item.id)}" aria-label="Sửa giao dịch">${iconSvg('edit')}</button><button class="icon-action" data-delete-transaction="${escapeHtml(item.id)}" aria-label="Xóa giao dịch">${iconSvg('close')}</button></div>` : saveButton}</div>`;
 }
 
 function renderRecent(items) {
@@ -282,7 +285,7 @@ function renderBudgets(expense) {
     const spent = sum(monthlyTransactions().filter((item) => item.type === 'expense' && item.categoryId === category.id));
     const limit = Number(budget.categories?.[category.id]) || 0;
     const percentage = limit ? Math.round(spent / limit * 100) : 0;
-    return `<div class="category-budget-row"><div class="budget-row-name"><span class="category-badge">${escapeHtml(category.icon)}</span><strong>${escapeHtml(category.name)}</strong></div><div class="budget-mini"><span>${money(spent)}${limit ? ` / ${money(limit)} · ${percentage}%` : ' đã chi'}</span><div class="progress-track"><div class="progress-fill ${percentage >= 100 ? 'danger' : percentage >= 80 ? 'warning' : ''}" style="width:${Math.min(percentage, 100)}%"></div></div></div><div class="budget-input-wrap"><input type="number" min="0" step="1000" inputmode="numeric" value="${limit || ''}" data-budget-input="${escapeHtml(category.id)}" aria-label="Ngân sách ${escapeHtml(category.name)}" placeholder="Chưa đặt" /><button data-save-budget="${escapeHtml(category.id)}" aria-label="Lưu ngân sách ${escapeHtml(category.name)}">✓</button></div></div>`;
+    return `<div class="category-budget-row"><div class="budget-row-name"><span class="category-badge">${categoryIconHtml(category.icon)}</span><strong>${escapeHtml(category.name)}</strong></div><div class="budget-mini"><span>${money(spent)}${limit ? ` / ${money(limit)} · ${percentage}%` : ' đã chi'}</span><div class="progress-track"><div class="progress-fill ${percentage >= 100 ? 'danger' : percentage >= 80 ? 'warning' : ''}" style="width:${Math.min(percentage, 100)}%"></div></div></div><div class="budget-input-wrap"><input type="number" min="0" step="1000" inputmode="numeric" value="${limit || ''}" data-budget-input="${escapeHtml(category.id)}" aria-label="Ngân sách ${escapeHtml(category.name)}" placeholder="Chưa đặt" /><button data-save-budget="${escapeHtml(category.id)}" aria-label="Lưu ngân sách ${escapeHtml(category.name)}">${iconSvg('check')}</button></div></div>`;
   }).join('');
 }
 
@@ -291,7 +294,7 @@ function renderCategories() {
     const categories = state.categories.filter((item) => item.type === type);
     $(`#${type}-categories`).innerHTML = categories.length ? categories.map((item) => {
       const count = state.transactions.filter((transaction) => transaction.categoryId === item.id).length;
-      return `<div class="category-row"><span class="category-badge ${type === 'income' ? 'income' : ''}">${escapeHtml(item.icon)}</span><strong>${escapeHtml(item.name)}</strong><small>${count} giao dịch</small><button class="icon-action" data-edit-category="${escapeHtml(item.id)}" aria-label="Sửa ${escapeHtml(item.name)}">✎</button><button class="icon-action" data-delete-category="${escapeHtml(item.id)}" aria-label="Xóa ${escapeHtml(item.name)}">×</button></div>`;
+      return `<div class="category-row"><span class="category-badge ${type === 'income' ? 'income' : ''}">${categoryIconHtml(item.icon)}</span><strong>${escapeHtml(item.name)}</strong><small>${count} giao dịch</small><button class="icon-action" data-edit-category="${escapeHtml(item.id)}" aria-label="Sửa ${escapeHtml(item.name)}">${iconSvg('edit')}</button><button class="icon-action" data-delete-category="${escapeHtml(item.id)}" aria-label="Xóa ${escapeHtml(item.name)}">${iconSvg('close')}</button></div>`;
     }).join('') : '<div class="empty-state">Chưa có danh mục.</div>';
   }
 }
@@ -318,7 +321,7 @@ function renderRecurring() {
   const due = dueRecurring(state, selectedMonth, todayLocal()).filter(({ rule }) => categoryById(rule.categoryId)?.type === rule.type);
   $('#overview-recurring-due').innerHTML = due.length ? `<div class="recurring-notice"><strong>${due.length} khoản định kỳ đến hạn trong ${monthName(selectedMonth)}</strong><button class="text-link" data-view="transactions">Xem và xác nhận →</button></div>` : '';
   $('#recurring-due').innerHTML = due.map(({ rule, occurrence }) => `<div class="recurring-due"><div><strong>Đến hạn: ${escapeHtml(rule.name)} · ${money(occurrence.amount)}</strong><small>${dateName(occurrence.date)} · Chưa ghi vào sổ</small></div><button class="button button-primary" data-confirm-recurring="${escapeHtml(rule.id)}">Xác nhận</button><button class="button button-outline" data-skip-recurring="${escapeHtml(rule.id)}">Bỏ qua tháng này</button></div>`).join('');
-  $('#recurring-list').innerHTML = state.recurring.length ? state.recurring.map((rule) => `<div class="recurring-row"><div><strong>${escapeHtml(rule.name)} · ${money(rule.amount)}</strong><small>Ngày ${rule.day} hằng tháng · từ ${monthName(rule.startMonth)}${(rule.skippedMonths || []).includes(selectedMonth) ? ' · Đã bỏ qua tháng này' : ''}</small></div>${(rule.skippedMonths || []).includes(selectedMonth) ? `<button class="text-link" data-unskip-recurring="${escapeHtml(rule.id)}">Hoàn tác bỏ qua</button>` : ''}<button class="icon-action" data-edit-recurring="${escapeHtml(rule.id)}" aria-label="Sửa ${escapeHtml(rule.name)}">✎</button><button class="icon-action" data-delete-recurring="${escapeHtml(rule.id)}" aria-label="Xóa ${escapeHtml(rule.name)}">×</button></div>`).join('') : '<p class="helper-empty">Chưa có khoản định kỳ. Tạo khoản như lương hoặc tiền thuê nhà để app nhắc xác nhận mỗi tháng.</p>';
+  $('#recurring-list').innerHTML = state.recurring.length ? state.recurring.map((rule) => `<div class="recurring-row"><div><strong>${escapeHtml(rule.name)} · ${money(rule.amount)}</strong><small>Ngày ${rule.day} hằng tháng · từ ${monthName(rule.startMonth)}${(rule.skippedMonths || []).includes(selectedMonth) ? ' · Đã bỏ qua tháng này' : ''}</small></div>${(rule.skippedMonths || []).includes(selectedMonth) ? `<button class="text-link" data-unskip-recurring="${escapeHtml(rule.id)}">Hoàn tác bỏ qua</button>` : ''}<button class="icon-action" data-edit-recurring="${escapeHtml(rule.id)}" aria-label="Sửa ${escapeHtml(rule.name)}">${iconSvg('edit')}</button><button class="icon-action" data-delete-recurring="${escapeHtml(rule.id)}" aria-label="Xóa ${escapeHtml(rule.name)}">${iconSvg('close')}</button></div>`).join('') : '<p class="helper-empty">Chưa có khoản định kỳ. Tạo khoản như lương hoặc tiền thuê nhà để app nhắc xác nhận mỗi tháng.</p>';
 }
 
 function populateTransactionCategories(type, selectedId = '') {
@@ -689,4 +692,7 @@ $$('[data-app-version]').forEach((element) => { element.textContent = `v${APP_VE
 setView(location.hash.slice(1) || 'overview');
 render();
 initializeSync();
-if ('serviceWorker' in navigator && location.protocol !== 'file:') window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {}));
+window.addEventListener('load', () => {
+  if (location.hash) window.scrollTo(0, 0);
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {});
+});
