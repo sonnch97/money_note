@@ -3,6 +3,7 @@
 PWA quản lý thu chi chạy trên Android và trình duyệt Windows. Trang tĩnh có thể host bằng GitHub Pages. Ứng dụng lưu dữ liệu trên thiết bị để dùng ngoại tuyến; có thể bật Supabase để đồng bộ giữa các thiết bị.
 
 Phiên bản đang chạy hiện dưới logo trên máy tính và cạnh logo trên điện thoại. Khi phát hành một bản mới, tăng `APP_VERSION` trong [version.js](version.js), cập nhật chữ dự phòng trong `index.html`, phiên bản trong `package.json` và `package-lock.json`, rồi đổi tên cache trong [sw.js](sw.js). Sau khi GitHub Pages cập nhật, tải lại trang để đối chiếu mã phiên bản mới.
+PWA kiểm tra lại tệp ứng dụng với máy chủ khi mở trang lúc có mạng, rồi cập nhật bản lưu ngoại tuyến. Tab đã mở từ trước vẫn cần tải lại để chạy mã mới; dữ liệu thu chi trên thiết bị không bị xóa khi cập nhật bộ nhớ đệm ứng dụng.
 
 ## Tính năng
 

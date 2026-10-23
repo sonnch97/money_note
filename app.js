@@ -689,4 +689,4 @@ $$('[data-app-version]').forEach((element) => { element.textContent = `v${APP_VE
 setView(location.hash.slice(1) || 'overview');
 render();
 initializeSync();
-if ('serviceWorker' in navigator && location.protocol !== 'file:') window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+if ('serviceWorker' in navigator && location.protocol !== 'file:') window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {}));
