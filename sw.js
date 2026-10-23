@@ -1,5 +1,5 @@
-const CACHE_NAME = 'moneynote-shell-v6';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './backup.js', './sync.js', './sync-data.js', './sync-config.js', './vendor/supabase.js', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './fonts/LilitaOne-Regular.ttf', './fonts/Nunito-wght.ttf'];
+const CACHE_NAME = 'moneynote-shell-v7';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './features.js', './backup.js', './sync.js', './sync-data.js', './sync-config.js', './vendor/supabase.js', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './fonts/LilitaOne-Regular.ttf', './fonts/Nunito-wght.ttf'];
 self.addEventListener('install', (event) => { event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (event) => { event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (event) => {

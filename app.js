@@ -1,6 +1,7 @@
 import { createBackup, parseBackup } from './backup.js';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './sync-config.js';
 import { MoneyNoteSync, diffRecords, LOCAL_DIRTY_KEY } from './sync.js';
+import { budgetAlerts, dueRecurring, filterTransactions } from './features.js';
 
 const STORAGE_KEY = 'moneynote.v1';
 const palette = ['#c95772', '#e58fa2', '#f4b2bd', '#eeaa8c', '#b5a0ce', '#dfc27c', '#9db9ad', '#c3cfaa'];
@@ -41,9 +42,11 @@ function loadState() {
       transactions: saved.transactions.filter((item) => item && typeof item.id === 'string' && ['income', 'expense'].includes(item.type) && Number.isSafeInteger(item.amount) && item.amount > 0 && validDate(item.date)),
       categories: saved.categories.filter((item) => item && typeof item.id === 'string' && typeof item.name === 'string' && ['income', 'expense'].includes(item.type)),
       budgets: saved.budgets && typeof saved.budgets === 'object' ? saved.budgets : {},
+      templates: Array.isArray(saved.templates) ? saved.templates.filter((item) => item && typeof item.id === 'string' && Number.isSafeInteger(item.amount) && item.amount > 0 && ['income', 'expense'].includes(item.type)) : [],
+      recurring: Array.isArray(saved.recurring) ? saved.recurring.filter((item) => item && typeof item.id === 'string' && Number.isSafeInteger(item.amount) && item.amount > 0 && Number.isInteger(item.day) && item.day >= 1 && item.day <= 31 && /^\d{4}-(0[1-9]|1[0-2])$/.test(item.startMonth)) : [],
     };
   } catch {
-    return { transactions: [], categories: structuredClone(defaultCategories), budgets: {} };
+    return { transactions: [], categories: structuredClone(defaultCategories), budgets: {}, templates: [], recurring: [] };
   }
 }
 
@@ -57,6 +60,8 @@ let sync;
 let supabaseClient;
 let sessionUser;
 let connectingUserId;
+let currentConflictKey;
+const deferredConflicts = new Set();
 
 function saveState() {
   const changes = diffRecords(lastSavedState, state);
@@ -132,7 +137,7 @@ async function initializeSync() {
   try {
     const { createClient } = await import('./vendor/supabase.js');
     supabaseClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
-    sync = new MoneyNoteSync({ client: supabaseClient, storage: localStorage, defaults: defaultCategories, getState: () => state, acceptState: acceptRemoteState, chooseInitialData, setStatus: setSyncStatus });
+    sync = new MoneyNoteSync({ client: supabaseClient, storage: localStorage, defaults: defaultCategories, getState: () => state, acceptState: acceptRemoteState, chooseInitialData, setStatus: setSyncStatus, onConflicts: showConflicts });
     supabaseClient.auth.onAuthStateChange((_event, session) => { setTimeout(() => handleSession(session), 0); });
   } catch (error) { setSyncStatus(`Không thể khởi tạo đồng bộ: ${error.message}`); }
 }
@@ -188,7 +193,10 @@ function render() {
   renderTransactionFilters();
   renderTransactions();
   renderBudgets(expense);
+  renderBudgetAlerts();
   renderCategories();
+  renderTemplates();
+  renderRecurring();
 }
 
 function renderCashflow() {
@@ -226,7 +234,7 @@ function renderOverviewBudget(expense) { $('#overview-budget').innerHTML = progr
 function transactionHtml(item, actions = false) {
   const category = categoryById(item.categoryId);
   const detail = [category?.name || 'Danh mục đã xóa', dateName(item.date)].join(' · ');
-  return `<div class="${actions ? 'transaction-item' : 'recent-item'}"><span class="category-badge ${item.type === 'income' ? 'income' : ''}" aria-hidden="true">${escapeHtml(category?.icon || '◈')}</span><div class="transaction-info"><strong>${escapeHtml(item.note || category?.name || 'Giao dịch')}</strong><span>${escapeHtml(detail)}</span></div><strong class="transaction-amount ${item.type}">${item.type === 'income' ? '+' : '−'}${money(item.amount)}</strong>${actions ? `<div class="transaction-actions"><button class="icon-action" data-edit-transaction="${escapeHtml(item.id)}" aria-label="Sửa giao dịch">✎</button><button class="icon-action" data-delete-transaction="${escapeHtml(item.id)}" aria-label="Xóa giao dịch">×</button></div>` : ''}</div>`;
+  return `<div class="${actions ? 'transaction-item' : 'recent-item'}"><span class="category-badge ${item.type === 'income' ? 'income' : ''}" aria-hidden="true">${escapeHtml(category?.icon || '◈')}</span><div class="transaction-info"><strong>${escapeHtml(item.note || category?.name || 'Giao dịch')}</strong><span>${escapeHtml(detail)}</span></div><strong class="transaction-amount ${item.type}">${item.type === 'income' ? '+' : '−'}${money(item.amount)}</strong>${actions ? `<div class="transaction-actions"><button class="icon-action" data-save-template="${escapeHtml(item.id)}" aria-label="Lưu giao dịch thành mẫu nhanh" title="Lưu thành mẫu">☆</button><button class="icon-action" data-edit-transaction="${escapeHtml(item.id)}" aria-label="Sửa giao dịch">✎</button><button class="icon-action" data-delete-transaction="${escapeHtml(item.id)}" aria-label="Xóa giao dịch">×</button></div>` : ''}</div>`;
 }
 
 function renderRecent(items) {
@@ -242,17 +250,21 @@ function renderTransactionFilters() {
 }
 
 function filteredTransactions() {
-  const query = $('#search-input').value.trim().toLocaleLowerCase('vi');
-  const type = $('#type-filter').value, category = $('#category-filter').value;
-  return sorted(monthlyTransactions().filter((item) => {
-    const categoryName = categoryById(item.categoryId)?.name || '';
-    return (type === 'all' || item.type === type) && (category === 'all' || item.categoryId === category) && (!query || `${item.note || ''} ${categoryName}`.toLocaleLowerCase('vi').includes(query));
+  return sorted(filterTransactions(state, {
+    query: $('#search-input').value,
+    type: $('#type-filter').value,
+    category: $('#category-filter').value,
+    period: $('#period-filter').value,
+    month: selectedMonth,
+    from: $('#date-from').value,
+    to: $('#date-to').value,
   }));
 }
 
 function renderTransactions() {
   const items = filteredTransactions();
   $('#transaction-count').textContent = `${items.length} giao dịch`;
+  $('#transaction-period-caption').textContent = $('#period-filter').value === 'month' ? monthName(selectedMonth) : $('#period-filter').value === 'range' ? 'Trong khoảng ngày' : 'Mọi thời gian';
   $('#transaction-list').innerHTML = items.length ? items.map((item) => transactionHtml(item, true)).join('') : '<div class="empty-state"><strong>Không tìm thấy giao dịch</strong>Thử đổi bộ lọc hoặc thêm giao dịch mới.</div>';
 }
 
@@ -279,6 +291,31 @@ function renderCategories() {
   }
 }
 
+function renderBudgetAlerts() {
+  const alerts = budgetAlerts(state, selectedMonth);
+  const html = alerts.map((alert) => {
+    const name = alert.scope === 'total' ? 'Tổng ngân sách' : categoryById(alert.categoryId)?.name || 'Danh mục đã xóa';
+    const detail = alert.spent >= alert.limit ? `Vượt ${money(alert.spent - alert.limit)}` : `Đã dùng ${alert.percent}% giới hạn ${money(alert.limit)}`;
+    return `<div class="budget-alert ${alert.level}"><strong>${alert.level === 'danger' ? 'Đã chạm hoặc vượt mức' : 'Sắp chạm mức'} · ${escapeHtml(name)}</strong>${detail}</div>`;
+  });
+  $('#overview-budget-alerts').innerHTML = html.slice(0, 2).join('');
+  $('#budget-alerts-detail').innerHTML = html.join('');
+}
+
+function renderTemplates() {
+  const items = state.templates.filter((item) => categoryById(item.categoryId)?.type === item.type);
+  const chip = (item, canDelete) => `<div class="template-item"><button data-use-template="${escapeHtml(item.id)}" title="Dùng mẫu ${escapeHtml(item.name)}">${escapeHtml(item.name)}<small>${money(item.amount)}</small></button>${canDelete ? `<button class="icon-action" data-delete-template="${escapeHtml(item.id)}" aria-label="Xóa mẫu ${escapeHtml(item.name)}">×</button>` : ''}</div>`;
+  $('#overview-template-list').innerHTML = items.length ? items.slice(0, 6).map((item) => chip(item, false)).join('') : '<p class="helper-empty">Trong danh sách giao dịch, bấm ☆ ở khoản thường dùng để lưu thành mẫu.</p>';
+  $('#template-list').innerHTML = items.length ? items.map((item) => chip(item, true)).join('') : '<p class="helper-empty">Bấm ☆ bên cạnh một giao dịch để tạo mẫu nhanh.</p>';
+}
+
+function renderRecurring() {
+  const due = dueRecurring(state, selectedMonth, todayLocal()).filter(({ rule }) => categoryById(rule.categoryId)?.type === rule.type);
+  $('#overview-recurring-due').innerHTML = due.length ? `<div class="recurring-notice"><strong>${due.length} khoản định kỳ đến hạn trong ${monthName(selectedMonth)}</strong><button class="text-link" data-view="transactions">Xem và xác nhận →</button></div>` : '';
+  $('#recurring-due').innerHTML = due.map(({ rule, occurrence }) => `<div class="recurring-due"><div><strong>Đến hạn: ${escapeHtml(rule.name)} · ${money(occurrence.amount)}</strong><small>${dateName(occurrence.date)} · Chưa ghi vào sổ</small></div><button class="button button-primary" data-confirm-recurring="${escapeHtml(rule.id)}">Xác nhận</button><button class="button button-outline" data-skip-recurring="${escapeHtml(rule.id)}">Bỏ qua tháng này</button></div>`).join('');
+  $('#recurring-list').innerHTML = state.recurring.length ? state.recurring.map((rule) => `<div class="recurring-row"><div><strong>${escapeHtml(rule.name)} · ${money(rule.amount)}</strong><small>Ngày ${rule.day} hằng tháng · từ ${monthName(rule.startMonth)}${(rule.skippedMonths || []).includes(selectedMonth) ? ' · Đã bỏ qua tháng này' : ''}</small></div>${(rule.skippedMonths || []).includes(selectedMonth) ? `<button class="text-link" data-unskip-recurring="${escapeHtml(rule.id)}">Hoàn tác bỏ qua</button>` : ''}<button class="icon-action" data-edit-recurring="${escapeHtml(rule.id)}" aria-label="Sửa ${escapeHtml(rule.name)}">✎</button><button class="icon-action" data-delete-recurring="${escapeHtml(rule.id)}" aria-label="Xóa ${escapeHtml(rule.name)}">×</button></div>`).join('') : '<p class="helper-empty">Chưa có khoản định kỳ. Tạo khoản như lương hoặc tiền thuê nhà để app nhắc xác nhận mỗi tháng.</p>';
+}
+
 function populateTransactionCategories(type, selectedId = '') {
   const options = state.categories.filter((item) => item.type === type);
   $('#transaction-category').innerHTML = options.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
@@ -291,14 +328,15 @@ function setTransactionType(type, selectedId = '') {
   populateTransactionCategories(type, selectedId);
 }
 
-function openTransaction(id = '') {
+function openTransaction(id = '', preset = null) {
   $('#transaction-form').reset();
   $('#transaction-id').value = id;
   $('#transaction-date').value = selectedMonth === currentMonth() ? todayLocal() : `${selectedMonth}-01`;
   const item = state.transactions.find((transaction) => transaction.id === id);
-  $('#transaction-dialog-title').textContent = item ? 'Sửa giao dịch' : 'Thêm giao dịch';
-  setTransactionType(item?.type || 'expense', item?.categoryId);
-  if (item) { $('#transaction-amount').value = formatAmountInput(item.amount); $('#transaction-date').value = item.date; $('#transaction-note').value = item.note || ''; }
+  $('#transaction-dialog-title').textContent = item ? 'Sửa giao dịch' : preset ? 'Xác nhận giao dịch' : 'Thêm giao dịch';
+  setTransactionType(item?.type || preset?.type || 'expense', item?.categoryId || preset?.categoryId);
+  const source = item || preset;
+  if (source) { $('#transaction-amount').value = formatAmountInput(source.amount); $('#transaction-date').value = source.date || todayLocal(); $('#transaction-note').value = source.note || ''; }
   $('#transaction-dialog').showModal();
   $('#transaction-amount').focus();
 }
@@ -311,7 +349,7 @@ function openCategory(id = '') {
   $('#category-name').value = category?.name || '';
   $('#category-type').value = category?.type || 'expense';
   $('#category-icon').value = category?.icon || '◈';
-  $('#category-type').disabled = !!category && state.transactions.some((item) => item.categoryId === id);
+  $('#category-type').disabled = !!category && [...state.transactions, ...state.templates, ...state.recurring].some((item) => item.categoryId === id);
   $('#category-dialog').showModal();
   $('#category-name').focus();
 }
@@ -324,7 +362,71 @@ function downloadFile(contents, filename, type) {
 
 function exportBackup() {
   downloadFile(createBackup(state), `moneynote-sao-luu-${todayLocal()}.json`, 'application/json;charset=utf-8');
-  toast('Đã sao lưu giao dịch, danh mục và ngân sách');
+  toast('Đã sao lưu toàn bộ dữ liệu');
+}
+
+function populateRecurringCategories(type, selectedId = '') {
+  const options = state.categories.filter((item) => item.type === type);
+  $('#recurring-category').innerHTML = options.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  if (options.some((item) => item.id === selectedId)) $('#recurring-category').value = selectedId;
+}
+
+function openRecurring(id = '') {
+  $('#recurring-form').reset();
+  const rule = state.recurring.find((item) => item.id === id);
+  $('#recurring-id').value = id;
+  $('#recurring-dialog-title').textContent = rule ? 'Sửa khoản định kỳ' : 'Tạo khoản định kỳ';
+  $('#recurring-name').value = rule?.name || '';
+  $('#recurring-type').value = rule?.type || 'expense';
+  populateRecurringCategories($('#recurring-type').value, rule?.categoryId);
+  $('#recurring-amount').value = rule ? formatAmountInput(rule.amount) : '';
+  $('#recurring-day').value = rule?.day || new Date().getDate();
+  $('#recurring-start').value = rule?.startMonth || currentMonth();
+  $('#recurring-note').value = rule?.note || '';
+  $('#recurring-dialog').showModal();
+  $('#recurring-name').focus();
+}
+
+function saveTemplate(transaction) {
+  const duplicate = state.templates.some((item) => item.type === transaction.type && item.amount === transaction.amount && item.categoryId === transaction.categoryId && item.note === (transaction.note || ''));
+  if (duplicate) { toast('Giao dịch này đã có mẫu nhanh'); return; }
+  state.templates.push({ id: uid(), name: (transaction.note || categoryById(transaction.categoryId)?.name || 'Giao dịch').slice(0, 60), type: transaction.type, amount: transaction.amount, categoryId: transaction.categoryId, note: transaction.note || '' });
+  saveState(); render(); toast('Đã lưu mẫu nhanh');
+}
+
+function conflictDescription(row) {
+  if (!row) return 'Mục chưa có trên đám mây';
+  if (row.deleted) return 'Mục đã bị xóa';
+  const item = row.payload || {};
+  if (row.kind === 'budget_total') return `Ngân sách ${monthName(row.record_id)}\nGiới hạn: ${money(item.amount)}`;
+  if (row.kind === 'category_budget') return `Ngân sách danh mục: ${categoryById(item.categoryId)?.name || item.categoryId}\n${monthName(item.month)} · ${money(item.amount)}`;
+  const lines = [item.name || (row.kind === 'transaction' ? 'Giao dịch' : row.record_id)];
+  if (item.type) lines.push(item.type === 'income' ? 'Khoản thu' : 'Khoản chi');
+  if (Number.isSafeInteger(item.amount)) lines.push(`Số tiền: ${money(item.amount)}`);
+  if (item.date) lines.push(`Ngày: ${dateName(item.date)}`);
+  if (item.categoryId) lines.push(`Danh mục: ${categoryById(item.categoryId)?.name || item.categoryId}`);
+  if (item.day) lines.push(`Ngày hằng tháng: ${item.day}`);
+  if (item.startMonth) lines.push(`Từ ${monthName(item.startMonth)}`);
+  if (item.note) lines.push(`Ghi chú: ${item.note}`);
+  if (item.icon) lines.push(`Biểu tượng: ${item.icon}`);
+  if (item.skippedMonths?.length) lines.push(`Đã bỏ qua: ${item.skippedMonths.join(', ')}`);
+  return lines.join('\n');
+}
+
+function showConflicts(items) {
+  if (!items.length) {
+    deferredConflicts.clear();
+    currentConflictKey = undefined;
+    if ($('#conflict-dialog').open) $('#conflict-dialog').close();
+    return;
+  }
+  if ($$('dialog[open]').some((dialog) => dialog.id !== 'conflict-dialog')) return;
+  const next = items.find((item) => !deferredConflicts.has(item.key));
+  if (!next) return;
+  currentConflictKey = next.key;
+  $('#conflict-local').textContent = conflictDescription(next.local);
+  $('#conflict-remote').textContent = conflictDescription(next.remote);
+  if (!$('#conflict-dialog').open) $('#conflict-dialog').showModal();
 }
 
 function exportCsv(items, filename) {
@@ -346,6 +448,36 @@ document.addEventListener('click', (event) => {
   if (target.hasAttribute('data-close')) target.closest('dialog').close();
   if (target.dataset.transactionType) setTransactionType(target.dataset.transactionType);
   if (target.dataset.editTransaction) openTransaction(target.dataset.editTransaction);
+  if (target.dataset.saveTemplate) {
+    const item = state.transactions.find((entry) => entry.id === target.dataset.saveTemplate);
+    if (item) saveTemplate(item);
+  }
+  if (target.dataset.useTemplate) {
+    const item = state.templates.find((entry) => entry.id === target.dataset.useTemplate);
+    if (item) openTransaction('', { ...item, date: todayLocal() });
+  }
+  if (target.dataset.deleteTemplate) {
+    const item = state.templates.find((entry) => entry.id === target.dataset.deleteTemplate);
+    if (item && confirm(`Xóa mẫu "${item.name}"?`)) { state.templates = state.templates.filter((entry) => entry.id !== item.id); saveState(); render(); toast('Đã xóa mẫu'); }
+  }
+  if (target.id === 'add-recurring') openRecurring();
+  if (target.dataset.editRecurring) openRecurring(target.dataset.editRecurring);
+  if (target.dataset.deleteRecurring) {
+    const rule = state.recurring.find((entry) => entry.id === target.dataset.deleteRecurring);
+    if (rule && confirm(`Xóa khoản định kỳ "${rule.name}"? Các giao dịch đã xác nhận vẫn được giữ.`)) { state.recurring = state.recurring.filter((entry) => entry.id !== rule.id); saveState(); render(); toast('Đã xóa khoản định kỳ'); }
+  }
+  if (target.dataset.confirmRecurring) {
+    const item = dueRecurring(state, selectedMonth, todayLocal()).find(({ rule }) => rule.id === target.dataset.confirmRecurring);
+    if (item) openTransaction(item.occurrence.id, item.occurrence);
+  }
+  if (target.dataset.skipRecurring) {
+    const rule = state.recurring.find((entry) => entry.id === target.dataset.skipRecurring);
+    if (rule) { rule.skippedMonths ||= []; if (!rule.skippedMonths.includes(selectedMonth)) rule.skippedMonths.push(selectedMonth); saveState(); render(); toast('Đã bỏ qua khoản này trong tháng'); }
+  }
+  if (target.dataset.unskipRecurring) {
+    const rule = state.recurring.find((entry) => entry.id === target.dataset.unskipRecurring);
+    if (rule) { rule.skippedMonths = (rule.skippedMonths || []).filter((month) => month !== selectedMonth); saveState(); render(); toast('Đã hoàn tác bỏ qua'); }
+  }
   if (target.dataset.deleteTransaction) {
     const item = state.transactions.find((entry) => entry.id === target.dataset.deleteTransaction);
     if (item && confirm(`Xóa giao dịch ${money(item.amount)}?`)) { state.transactions = state.transactions.filter((entry) => entry.id !== item.id); saveState(); render(); toast('Đã xóa giao dịch'); }
@@ -354,7 +486,7 @@ document.addEventListener('click', (event) => {
   if (target.dataset.editCategory) openCategory(target.dataset.editCategory);
   if (target.dataset.deleteCategory) {
     const id = target.dataset.deleteCategory, category = categoryById(id);
-    if (state.transactions.some((item) => item.categoryId === id)) { toast('Danh mục đã có giao dịch, không thể xóa'); return; }
+    if ([...state.transactions, ...state.templates, ...state.recurring].some((item) => item.categoryId === id)) { toast('Danh mục đang được dùng, không thể xóa'); return; }
     if (category && confirm(`Xóa danh mục "${category.name}"?`)) {
       state.categories = state.categories.filter((item) => item.id !== id);
       Object.values(state.budgets).forEach((budget) => { if (budget.categories) delete budget.categories[id]; });
@@ -370,7 +502,7 @@ document.addEventListener('click', (event) => {
   }
   if (target.hasAttribute('data-backup')) exportBackup();
   if (target.hasAttribute('data-restore')) $('#backup-file').click();
-  if (target.hasAttribute('data-sync-open')) { updateSyncDialog(); $('#sync-dialog').showModal(); }
+  if (target.hasAttribute('data-sync-open')) { if (sync?.getConflicts().length) { deferredConflicts.clear(); showConflicts(sync.getConflicts()); } else { updateSyncDialog(); $('#sync-dialog').showModal(); } }
 });
 
 $('#backup-file').addEventListener('change', async (event) => {
@@ -380,9 +512,9 @@ $('#backup-file').addEventListener('change', async (event) => {
   if (file.size > 10 * 1024 * 1024) { toast('Tệp sao lưu quá lớn (tối đa 10 MB)'); return; }
   try {
     pendingRestore = parseBackup(await file.text());
-    const { transactions, categories, budgets } = pendingRestore.data;
+    const { transactions, categories, budgets, templates, recurring } = pendingRestore.data;
     const exportedAt = new Date(pendingRestore.exportedAt).toLocaleString('vi-VN');
-    $('#restore-summary').textContent = `Bản sao lưu ngày ${exportedAt}: ${transactions.length} giao dịch, ${categories.length} danh mục và ${Object.keys(budgets).length} tháng ngân sách.`;
+    $('#restore-summary').textContent = `Bản sao lưu ngày ${exportedAt}: ${transactions.length} giao dịch, ${categories.length} danh mục, ${Object.keys(budgets).length} tháng ngân sách, ${templates.length} mẫu nhanh và ${recurring.length} khoản định kỳ.`;
     $('#restore-dialog .restore-warning').textContent = sync?.active
       ? 'Bản sao lưu sẽ thay thế dữ liệu trên thiết bị này và các mục thay đổi sẽ được đồng bộ lên đám mây. Hãy sao lưu dữ liệu hiện tại trước khi tiếp tục.'
       : 'Dữ liệu trên thiết bị này sẽ được thay thế. Hãy sao lưu dữ liệu hiện tại trước khi tiếp tục.';
@@ -404,6 +536,10 @@ $('#confirm-restore').addEventListener('click', () => {
   $('#search-input').value = '';
   $('#type-filter').value = 'all';
   $('#category-filter').value = 'all';
+  $('#period-filter').value = 'all';
+  $('#date-range-fields').hidden = true;
+  $('#date-from').value = '';
+  $('#date-to').value = '';
   setView('overview');
   render();
   toast('Đã khôi phục toàn bộ dữ liệu');
@@ -449,12 +585,12 @@ $('#transaction-form').addEventListener('submit', (event) => {
   if (amount === null || !validDate(date) || categoryById(categoryId)?.type !== type) { toast('Kiểm tra lại số tiền, ngày và danh mục'); return; }
   const id = $('#transaction-id').value;
   const existing = state.transactions.find((item) => item.id === id);
-  const next = { id: existing?.id || uid(), type, amount, categoryId, date, note: $('#transaction-note').value.trim(), createdAt: existing?.createdAt || new Date().toISOString() };
+  const next = { id: existing?.id || id || uid(), type, amount, categoryId, date, note: $('#transaction-note').value.trim(), createdAt: existing?.createdAt || new Date().toISOString() };
   if (existing) Object.assign(existing, next); else state.transactions.push(next);
   $('#transaction-dialog').close(); selectedMonth = date.slice(0, 7); saveState(); render(); toast(existing ? 'Đã cập nhật giao dịch' : 'Đã thêm giao dịch');
 });
 
-$('#transaction-amount').addEventListener('input', (event) => {
+function onAmountInput(event) {
   const input = event.currentTarget;
   const before = input.value;
   const digits = before.replace(/\D/g, '');
@@ -469,7 +605,42 @@ $('#transaction-amount').addEventListener('input', (event) => {
     caret++;
   }
   input.setSelectionRange(caret, caret);
+}
+for (const selector of ['#transaction-amount', '#recurring-amount']) $(selector).addEventListener('input', onAmountInput);
+
+$('#recurring-type').addEventListener('change', (event) => populateRecurringCategories(event.target.value));
+$('#recurring-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const id = $('#recurring-id').value;
+  const existing = state.recurring.find((item) => item.id === id);
+  const name = $('#recurring-name').value.trim();
+  const type = $('#recurring-type').value;
+  const categoryId = $('#recurring-category').value;
+  const amount = amountInput(amountDigits($('#recurring-amount').value));
+  const day = Number($('#recurring-day').value);
+  const startMonth = $('#recurring-start').value;
+  const note = $('#recurring-note').value.trim();
+  if (!name || amount === null || !Number.isInteger(day) || day < 1 || day > 31 || !/^\d{4}-(0[1-9]|1[0-2])$/.test(startMonth) || categoryById(categoryId)?.type !== type) { toast('Kiểm tra lại khoản định kỳ'); return; }
+  const next = { id: existing?.id || uid(), name, type, categoryId, amount, day, startMonth, note, skippedMonths: existing?.skippedMonths || [] };
+  if (existing) Object.assign(existing, next); else state.recurring.push(next);
+  $('#recurring-dialog').close(); saveState(); render(); toast(existing ? 'Đã sửa khoản định kỳ' : 'Đã tạo khoản định kỳ');
 });
+
+$('#conflict-later').addEventListener('click', () => {
+  if (currentConflictKey) deferredConflicts.add(currentConflictKey);
+  $('#conflict-dialog').close();
+  showConflicts(sync?.getConflicts() || []);
+});
+for (const [selector, choice] of [['#conflict-use-local', 'local'], ['#conflict-use-remote', 'remote']]) {
+  $(selector).addEventListener('click', () => {
+    if (!currentConflictKey) return;
+    const key = currentConflictKey;
+    $('#conflict-dialog').close();
+    deferredConflicts.delete(key);
+    currentConflictKey = undefined;
+    sync.resolveConflict(key, choice);
+  });
+}
 
 $('#category-form').addEventListener('submit', (event) => {
   event.preventDefault();
@@ -493,6 +664,8 @@ $('#month-input').addEventListener('change', (event) => {
   selectedMonth = event.target.value; render();
 });
 for (const selector of ['#search-input', '#type-filter', '#category-filter']) $(selector).addEventListener(selector === '#search-input' ? 'input' : 'change', renderTransactions);
+$('#period-filter').addEventListener('change', (event) => { $('#date-range-fields').hidden = event.target.value !== 'range'; renderTransactions(); });
+for (const selector of ['#date-from', '#date-to']) $(selector).addEventListener('change', renderTransactions);
 $('#sidebar-export').addEventListener('click', () => exportCsv(state.transactions, `moneynote-tat-ca-${todayLocal()}.csv`));
 $('#export-all').addEventListener('click', () => exportCsv(state.transactions, `moneynote-tat-ca-${todayLocal()}.csv`));
 $('#export-filtered').addEventListener('click', () => exportCsv(filteredTransactions(), `moneynote-${selectedMonth}.csv`));

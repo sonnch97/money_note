@@ -1,19 +1,27 @@
--- Chạy một lần trong Supabase Dashboard → SQL Editor.
--- Mỗi giao dịch, danh mục và khoản ngân sách là một hàng riêng.
+-- Chạy trong Supabase Dashboard → SQL Editor trước khi đăng bản app mới.
+-- Có thể chạy lại để nâng cấp bảng cũ; mỗi mục là một hàng riêng.
 create table if not exists public.moneynote_records (
   user_id uuid not null references auth.users(id) on delete cascade,
-  kind text not null check (kind in ('transaction', 'category', 'budget_total', 'category_budget')),
+  kind text not null,
   record_id text not null check (length(record_id) between 1 and 512),
   payload jsonb not null default '{}'::jsonb,
   deleted boolean not null default false,
+  version bigint not null default 1,
   updated_at timestamptz not null default now(),
   primary key (user_id, kind, record_id)
 );
+
+-- Chạy lại tệp này trên dự án đã dùng bản cũ để nâng cấp mà vẫn giữ nguyên dữ liệu.
+alter table public.moneynote_records add column if not exists version bigint not null default 1;
+alter table public.moneynote_records drop constraint if exists moneynote_records_kind_check;
+alter table public.moneynote_records add constraint moneynote_records_kind_check
+  check (kind in ('transaction', 'category', 'budget_total', 'category_budget', 'template', 'recurring'));
 
 create or replace function public.moneynote_touch_updated_at()
 returns trigger language plpgsql as $$
 begin
   new.updated_at = now();
+  new.version = old.version + 1;
   return new;
 end;
 $$;
