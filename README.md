@@ -8,7 +8,7 @@ Phiên bản đang chạy hiện dưới logo trên máy tính và cạnh logo t
 
 - Ghi khoản thu và chi, xem biểu đồ, đặt ngân sách tháng và theo danh mục. Thẻ **Chênh lệch thu chi tháng** bằng thu nhập trừ chi tiêu trong tháng đang chọn; đây không phải số dư tài khoản tích lũy.
 - Tìm giao dịch trong mọi tháng, riêng tháng đã chọn hoặc một khoảng ngày; xuất CSV theo bộ lọc hiện tại.
-- Bấm ☆ ở một giao dịch để lưu thành **mẫu nhanh**. Bấm mẫu để mở giao dịch mới với số tiền, danh mục và ghi chú đã điền sẵn; kiểm tra rồi lưu.
+- Chọn **Lưu làm mẫu nhanh** ngay trong form thêm giao dịch, hoặc bấm ☆ Mẫu ở giao dịch đã ghi. Bấm mẫu để mở giao dịch mới với số tiền, danh mục và ghi chú đã điền sẵn; kiểm tra rồi lưu.
 - App hiển thị cảnh báo khi chi tiêu đạt từ 80% ngân sách, và cảnh báo mạnh hơn khi đạt hoặc vượt 100%.
 - Tạo **khoản định kỳ** theo ngày trong tháng. Khi đến hạn, app cho xem bản nháp và yêu cầu xác nhận trước khi ghi vào sổ; có thể bỏ qua tháng đó. Ngày 29–31 được lùi về cuối tháng nếu cần. Không có giao dịch nào tự động được ghi.
 - Sao lưu JSON gồm cả mẫu nhanh và khoản định kỳ. Bản sao lưu định dạng cũ vẫn khôi phục được.

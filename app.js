@@ -235,7 +235,11 @@ function renderOverviewBudget(expense) { $('#overview-budget').innerHTML = progr
 function transactionHtml(item, actions = false) {
   const category = categoryById(item.categoryId);
   const detail = [category?.name || 'Danh mục đã xóa', dateName(item.date)].join(' · ');
-  return `<div class="${actions ? 'transaction-item' : 'recent-item'}"><span class="category-badge ${item.type === 'income' ? 'income' : ''}" aria-hidden="true">${escapeHtml(category?.icon || '◈')}</span><div class="transaction-info"><strong>${escapeHtml(item.note || category?.name || 'Giao dịch')}</strong><span>${escapeHtml(detail)}</span></div><strong class="transaction-amount ${item.type}">${item.type === 'income' ? '+' : '−'}${money(item.amount)}</strong>${actions ? `<div class="transaction-actions"><button class="icon-action" data-save-template="${escapeHtml(item.id)}" aria-label="Lưu giao dịch thành mẫu nhanh" title="Lưu thành mẫu">☆</button><button class="icon-action" data-edit-transaction="${escapeHtml(item.id)}" aria-label="Sửa giao dịch">✎</button><button class="icon-action" data-delete-transaction="${escapeHtml(item.id)}" aria-label="Xóa giao dịch">×</button></div>` : ''}</div>`;
+  const savedAsTemplate = state.templates.some((template) => template.type === item.type && template.amount === item.amount && template.categoryId === item.categoryId && template.note === (item.note || ''));
+  const saveButton = savedAsTemplate
+    ? '<span class="template-saved" aria-label="Đã lưu làm mẫu nhanh" title="Đã lưu làm mẫu nhanh">★ <span>Mẫu</span></span>'
+    : `<button class="template-save-button" data-save-template="${escapeHtml(item.id)}" aria-label="Lưu giao dịch thành mẫu nhanh" title="Lưu thành mẫu nhanh">☆ <span>Mẫu</span></button>`;
+  return `<div class="${actions ? 'transaction-item' : 'recent-item'}"><span class="category-badge ${item.type === 'income' ? 'income' : ''}" aria-hidden="true">${escapeHtml(category?.icon || '◈')}</span><div class="transaction-info"><strong>${escapeHtml(item.note || category?.name || 'Giao dịch')}</strong><span>${escapeHtml(detail)}</span></div><strong class="transaction-amount ${item.type}">${item.type === 'income' ? '+' : '−'}${money(item.amount)}</strong>${actions ? `<div class="transaction-actions">${saveButton}<button class="icon-action" data-edit-transaction="${escapeHtml(item.id)}" aria-label="Sửa giao dịch">✎</button><button class="icon-action" data-delete-transaction="${escapeHtml(item.id)}" aria-label="Xóa giao dịch">×</button></div>` : saveButton}</div>`;
 }
 
 function renderRecent(items) {
@@ -306,8 +310,8 @@ function renderBudgetAlerts() {
 function renderTemplates() {
   const items = state.templates.filter((item) => categoryById(item.categoryId)?.type === item.type);
   const chip = (item, canDelete) => `<div class="template-item"><button data-use-template="${escapeHtml(item.id)}" title="Dùng mẫu ${escapeHtml(item.name)}">${escapeHtml(item.name)}<small>${money(item.amount)}</small></button>${canDelete ? `<button class="icon-action" data-delete-template="${escapeHtml(item.id)}" aria-label="Xóa mẫu ${escapeHtml(item.name)}">×</button>` : ''}</div>`;
-  $('#overview-template-list').innerHTML = items.length ? items.slice(0, 6).map((item) => chip(item, false)).join('') : '<p class="helper-empty">Trong danh sách giao dịch, bấm ☆ ở khoản thường dùng để lưu thành mẫu.</p>';
-  $('#template-list').innerHTML = items.length ? items.map((item) => chip(item, true)).join('') : '<p class="helper-empty">Bấm ☆ bên cạnh một giao dịch để tạo mẫu nhanh.</p>';
+  $('#overview-template-list').innerHTML = items.length ? items.slice(0, 6).map((item) => chip(item, false)).join('') : '<p class="helper-empty">Khi thêm giao dịch, chọn “Lưu làm mẫu nhanh” để dùng lại lần sau.</p>';
+  $('#template-list').innerHTML = items.length ? items.map((item) => chip(item, true)).join('') : '<p class="helper-empty">Chọn “Lưu làm mẫu nhanh” khi thêm giao dịch, hoặc bấm ☆ Mẫu ở giao dịch đã có.</p>';
 }
 
 function renderRecurring() {
@@ -388,10 +392,15 @@ function openRecurring(id = '') {
   $('#recurring-name').focus();
 }
 
-function saveTemplate(transaction) {
+function addTemplateFromTransaction(transaction) {
   const duplicate = state.templates.some((item) => item.type === transaction.type && item.amount === transaction.amount && item.categoryId === transaction.categoryId && item.note === (transaction.note || ''));
-  if (duplicate) { toast('Giao dịch này đã có mẫu nhanh'); return; }
+  if (duplicate) return false;
   state.templates.push({ id: uid(), name: (transaction.note || categoryById(transaction.categoryId)?.name || 'Giao dịch').slice(0, 60), type: transaction.type, amount: transaction.amount, categoryId: transaction.categoryId, note: transaction.note || '' });
+  return true;
+}
+
+function saveTemplate(transaction) {
+  if (!addTemplateFromTransaction(transaction)) { toast('Giao dịch này đã có mẫu nhanh'); return; }
   saveState(); render(); toast('Đã lưu mẫu nhanh');
 }
 
@@ -588,7 +597,10 @@ $('#transaction-form').addEventListener('submit', (event) => {
   const existing = state.transactions.find((item) => item.id === id);
   const next = { id: existing?.id || id || uid(), type, amount, categoryId, date, note: $('#transaction-note').value.trim(), createdAt: existing?.createdAt || new Date().toISOString() };
   if (existing) Object.assign(existing, next); else state.transactions.push(next);
-  $('#transaction-dialog').close(); selectedMonth = date.slice(0, 7); saveState(); render(); toast(existing ? 'Đã cập nhật giao dịch' : 'Đã thêm giao dịch');
+  const wantedTemplate = $('#transaction-save-template').checked;
+  const templateAdded = wantedTemplate && addTemplateFromTransaction(next);
+  $('#transaction-dialog').close(); selectedMonth = date.slice(0, 7); saveState(); render();
+  toast(wantedTemplate ? templateAdded ? 'Đã lưu giao dịch và mẫu nhanh' : 'Đã lưu giao dịch; mẫu này đã tồn tại' : existing ? 'Đã cập nhật giao dịch' : 'Đã thêm giao dịch');
 });
 
 function onAmountInput(event) {
