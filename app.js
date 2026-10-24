@@ -1,7 +1,7 @@
 import { createBackup, parseBackup } from './backup.js';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './sync-config.js';
 import { MoneyNoteSync, diffRecords, LOCAL_DIRTY_KEY } from './sync.js';
-import { budgetAlerts, dueRecurring, filterTransactions } from './features.js';
+import { annualReport, budgetAlerts, dueRecurring, filterTransactions } from './features.js';
 import { CATEGORY_ICON_OPTIONS, categoryIconSymbol, categoryIconValue, categoryIconsForType } from './category-icons.js';
 import { APP_VERSION } from './version.js';
 
@@ -60,6 +60,7 @@ function loadState() {
 let state = loadState();
 let lastSavedState = structuredClone(state);
 let selectedMonth = currentMonth();
+let selectedYear = selectedMonth.slice(0, 4);
 let activeView = 'overview';
 let toastTimer;
 let pendingRestore;
@@ -172,11 +173,12 @@ function amountInput(value, allowZero = false) {
 }
 
 function setView(view) {
-  if (!['overview', 'transactions', 'budgets', 'categories'].includes(view)) return;
+  if (!['overview', 'transactions', 'budgets', 'yearly', 'categories'].includes(view)) return;
   activeView = view;
+  document.body.classList.toggle('yearly-view', view === 'yearly');
   $$('.view').forEach((el) => el.classList.toggle('active', el.id === view));
   $$('[data-view]').forEach((el) => el.classList.toggle('active', el.dataset.view === view));
-  $('#breadcrumb-current').textContent = { overview: 'Tổng quan', transactions: 'Giao dịch', budgets: 'Ngân sách', categories: 'Danh mục' }[view];
+  $('#breadcrumb-current').textContent = { overview: 'Tổng quan', transactions: 'Giao dịch', budgets: 'Ngân sách', yearly: 'Theo năm', categories: 'Danh mục' }[view];
   if (location.hash !== `#${view}`) history.replaceState(null, '', `#${view}`);
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
@@ -194,6 +196,7 @@ function render() {
   $('#income-count').textContent = incomeItems.length;
   $('#expense-count').textContent = expenseItems.length;
   renderCashflow();
+  renderYearly();
   renderCategoryChart(expenseItems);
   renderOverviewBudget(expense);
   renderRecent(items);
@@ -204,6 +207,35 @@ function render() {
   renderCategories();
   renderTemplates();
   renderRecurring();
+}
+
+function renderYearly() {
+  const years = [...new Set([selectedYear, currentMonth().slice(0, 4), ...state.transactions.map((item) => item.date.slice(0, 4))])].sort((a, b) => b.localeCompare(a));
+  $('#year-input').innerHTML = years.map((year) => `<option value="${year}">${year}</option>`).join('');
+  $('#year-input').value = selectedYear;
+
+  const report = annualReport(state, selectedYear);
+  const expenseCount = report.transactions.filter((item) => item.type === 'expense').length;
+  const incomeCount = report.transactions.filter((item) => item.type === 'income').length;
+  $('#year-expense-total').textContent = money(report.expenseTotal);
+  $('#year-income-total').textContent = money(report.incomeTotal);
+  $('#year-net-total').textContent = money(report.incomeTotal - report.expenseTotal);
+  $('#year-expense-caption').textContent = `${expenseCount} giao dịch chi`;
+  $('#year-income-caption').textContent = `${incomeCount} giao dịch thu`;
+
+  const max = Math.max(1, ...report.months.flatMap((month) => [month.income, month.expense]));
+  $('#yearly-chart').innerHTML = report.months.map((month) => `<div class="yearly-chart-col"><div class="yearly-bar-area"><span class="yearly-bar income" style="height:${month.income ? Math.max(3, month.income / max * 100) : 0}%" title="Tháng ${month.number}: thu ${money(month.income)}"></span><span class="yearly-bar expense" style="height:${month.expense ? Math.max(3, month.expense / max * 100) : 0}%" title="Tháng ${month.number}: chi ${money(month.expense)}"></span></div><span>T${month.number}</span></div>`).join('');
+  $('#yearly-chart').setAttribute('aria-label', `Thu và chi theo 12 tháng năm ${selectedYear}. Tổng thu ${money(report.incomeTotal)}, tổng chi ${money(report.expenseTotal)}.`);
+
+  $('#yearly-categories').innerHTML = report.categories.length
+    ? report.categories.map(({ id, amount }, index) => {
+      const category = categoryById(id);
+      const percent = Math.round(amount / report.expenseTotal * 100);
+      return `<div class="yearly-category-row"><span class="category-badge">${categoryIconHtml(category?.icon, id)}</span><div class="yearly-category-info"><div><strong>${escapeHtml(category?.name || 'Danh mục đã xóa')}</strong><span>${percent}%</span></div><div class="yearly-category-track"><i style="width:${amount / report.expenseTotal * 100}%;background:${palette[index % palette.length]}"></i></div></div><strong class="yearly-category-amount">${money(amount)}</strong></div>`;
+    }).join('')
+    : '<div class="empty-state"><strong>Chưa có khoản chi trong năm này</strong>Chọn năm khác hoặc ghi khoản chi để xem phân bổ.</div>';
+
+  $('#yearly-months').innerHTML = report.months.map((month) => `<button class="yearly-month-row" data-year-month="${selectedYear}-${String(month.number).padStart(2, '0')}" title="Xem tháng ${month.number}/${selectedYear}"><span>Tháng ${month.number}</span><span>${money(month.income)}</span><span class="yearly-expense-value">${money(month.expense)}</span><span class="${month.income - month.expense < 0 ? 'yearly-negative' : ''}">${money(month.income - month.expense)}</span></button>`).join('');
 }
 
 function renderCashflow() {
@@ -478,6 +510,7 @@ function exportCsv(items, filename) {
 document.addEventListener('click', (event) => {
   const target = event.target.closest('button'); if (!target) return;
   if (target.dataset.view) setView(target.dataset.view);
+  if (target.dataset.yearMonth) { selectedMonth = target.dataset.yearMonth; render(); setView('overview'); }
   if (target.hasAttribute('data-add')) openTransaction();
   if (target.hasAttribute('data-close')) target.closest('dialog').close();
   if (target.dataset.transactionType) setTransactionType(target.dataset.transactionType);
@@ -575,6 +608,7 @@ $('#confirm-restore').addEventListener('click', () => {
   pendingRestore = undefined;
   $('#restore-dialog').close();
   selectedMonth = state.transactions.length ? state.transactions.reduce((latest, item) => item.date > latest ? item.date : latest, '').slice(0, 7) : currentMonth();
+  selectedYear = selectedMonth.slice(0, 4);
   $('#search-input').value = '';
   $('#type-filter').value = 'all';
   $('#category-filter').value = 'all';
@@ -631,7 +665,7 @@ $('#transaction-form').addEventListener('submit', (event) => {
   if (existing) Object.assign(existing, next); else state.transactions.push(next);
   const wantedTemplate = $('#transaction-save-template').checked;
   const templateAdded = wantedTemplate && addTemplateFromTransaction(next);
-  $('#transaction-dialog').close(); selectedMonth = date.slice(0, 7); saveState(); render();
+  $('#transaction-dialog').close(); selectedMonth = date.slice(0, 7); selectedYear = date.slice(0, 4); saveState(); render();
   toast(wantedTemplate ? templateAdded ? 'Đã lưu giao dịch và mẫu nhanh' : 'Đã lưu giao dịch; mẫu này đã tồn tại' : existing ? 'Đã cập nhật giao dịch' : 'Đã thêm giao dịch');
 });
 
@@ -710,14 +744,16 @@ $('#total-budget-form').addEventListener('submit', (event) => {
 
 $('#month-input').addEventListener('change', (event) => {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value)) return;
-  selectedMonth = event.target.value; render();
+  selectedMonth = event.target.value; selectedYear = selectedMonth.slice(0, 4); render();
 });
+$('#year-input').addEventListener('change', (event) => { selectedYear = event.target.value; renderYearly(); });
 for (const selector of ['#search-input', '#type-filter', '#category-filter']) $(selector).addEventListener(selector === '#search-input' ? 'input' : 'change', renderTransactions);
 $('#period-filter').addEventListener('change', (event) => { $('#date-range-fields').hidden = event.target.value !== 'range'; renderTransactions(); });
 for (const selector of ['#date-from', '#date-to']) $(selector).addEventListener('change', renderTransactions);
 $('#sidebar-export').addEventListener('click', () => exportCsv(state.transactions, `moneynote-tat-ca-${todayLocal()}.csv`));
 $('#export-all').addEventListener('click', () => exportCsv(state.transactions, `moneynote-tat-ca-${todayLocal()}.csv`));
 $('#export-filtered').addEventListener('click', () => exportCsv(filteredTransactions(), `moneynote-${selectedMonth}.csv`));
+$('#export-year').addEventListener('click', () => exportCsv(annualReport(state, selectedYear).transactions, `moneynote-${selectedYear}.csv`));
 for (const dialog of $$('dialog')) dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
 window.addEventListener('hashchange', () => setView(location.hash.slice(1)));
 

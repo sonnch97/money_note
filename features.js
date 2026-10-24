@@ -10,6 +10,33 @@ export function filterTransactions(state, { query = '', type = 'all', category =
   });
 }
 
+export function annualReport(state, year) {
+  const transactions = state.transactions.filter((item) => item.date.slice(0, 4) === String(year));
+  const months = Array.from({ length: 12 }, (_, index) => ({
+    number: index + 1,
+    income: 0,
+    expense: 0,
+  }));
+  const categoryAmounts = new Map();
+  let incomeTotal = 0;
+  let expenseTotal = 0;
+  for (const item of transactions) {
+    const month = months[Number(item.date.slice(5, 7)) - 1];
+    if (!month) continue;
+    if (item.type === 'income') {
+      month.income += item.amount;
+      incomeTotal += item.amount;
+    } else if (item.type === 'expense') {
+      month.expense += item.amount;
+      expenseTotal += item.amount;
+      categoryAmounts.set(item.categoryId, (categoryAmounts.get(item.categoryId) || 0) + item.amount);
+    }
+  }
+  const categories = [...categoryAmounts].map(([id, amount]) => ({ id, amount }))
+    .sort((a, b) => b.amount - a.amount || a.id.localeCompare(b.id));
+  return { transactions, months, incomeTotal, expenseTotal, categories };
+}
+
 export function budgetAlerts(state, month) {
   const budget = state.budgets[month];
   if (!budget) return [];

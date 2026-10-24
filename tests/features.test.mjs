@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { budgetAlerts, dueRecurring, filterTransactions, recurringOccurrence } from '../features.js';
+import { annualReport, budgetAlerts, dueRecurring, filterTransactions, recurringOccurrence } from '../features.js';
 
 const state = {
   categories: [{ id: 'food', name: 'Ăn uống', type: 'expense' }],
@@ -36,4 +36,22 @@ test('khoản định kỳ ngày 31 dùng cuối tháng ngắn và không nhắc
   state.transactions.pop();
   state.recurring[0].skippedMonths.push('2026-02');
   assert.equal(dueRecurring(state, '2026-02', '2026-02-28').length, 0);
+});
+
+test('báo cáo năm cộng thu chi đúng tháng và danh mục, không lẫn năm khác', () => {
+  const sample = { transactions: [
+    { id: '1', type: 'expense', categoryId: 'food', amount: 100000, date: '2026-01-31' },
+    { id: '2', type: 'income', categoryId: 'salary', amount: 900000, date: '2026-01-01' },
+    { id: '3', type: 'expense', categoryId: 'home', amount: 250000, date: '2026-12-01' },
+    { id: '4', type: 'expense', categoryId: 'food', amount: 70000, date: '2025-12-31' },
+  ] };
+  const report = annualReport(sample, '2026');
+  assert.deepEqual([report.incomeTotal, report.expenseTotal, report.transactions.length], [900000, 350000, 3]);
+  assert.deepEqual([report.months[0].income, report.months[0].expense, report.months[11].expense], [900000, 100000, 250000]);
+  assert.deepEqual(report.categories, [{ id: 'home', amount: 250000 }, { id: 'food', amount: 100000 }]);
+  assert.equal(report.months.length, 12);
+  assert.equal(report.months.slice(1, 11).every((item) => item.income === 0 && item.expense === 0), true);
+  const empty = annualReport(sample, '2024');
+  assert.equal(empty.expenseTotal, 0);
+  assert.deepEqual(empty.categories, []);
 });
