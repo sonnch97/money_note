@@ -2,22 +2,23 @@ import { createBackup, parseBackup } from './backup.js';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './sync-config.js';
 import { MoneyNoteSync, diffRecords, LOCAL_DIRTY_KEY } from './sync.js';
 import { budgetAlerts, dueRecurring, filterTransactions } from './features.js';
+import { CATEGORY_ICON_OPTIONS, categoryIconSymbol, categoryIconValue, categoryIconsForType } from './category-icons.js';
 import { APP_VERSION } from './version.js';
 
 const STORAGE_KEY = 'moneynote.v1';
 const palette = ['#d16d8b', '#f2ae8f', '#99cc7a', '#dce7d6', '#b5a0ce', '#dfc27c', '#9db9ad', '#c3cfaa'];
 const defaultCategories = [
-  { id: 'food', name: 'Ăn uống', type: 'expense', icon: '◕' },
-  { id: 'shopping', name: 'Mua sắm', type: 'expense', icon: '▣' },
-  { id: 'home', name: 'Nhà cửa', type: 'expense', icon: '⌂' },
-  { id: 'transport', name: 'Di chuyển', type: 'expense', icon: '◎' },
-  { id: 'health', name: 'Sức khỏe', type: 'expense', icon: '✚' },
-  { id: 'learning', name: 'Học tập', type: 'expense', icon: '♧' },
-  { id: 'fun', name: 'Giải trí', type: 'expense', icon: '✦' },
-  { id: 'other-expense', name: 'Khác', type: 'expense', icon: '◈' },
-  { id: 'salary', name: 'Lương', type: 'income', icon: '↗' },
-  { id: 'bonus', name: 'Thưởng', type: 'income', icon: '✦' },
-  { id: 'other-income', name: 'Thu nhập khác', type: 'income', icon: '◈' },
+  { id: 'food', name: 'Ăn uống', type: 'expense', icon: 'food' },
+  { id: 'shopping', name: 'Mua sắm', type: 'expense', icon: 'shopping' },
+  { id: 'home', name: 'Nhà cửa', type: 'expense', icon: 'home' },
+  { id: 'transport', name: 'Di chuyển', type: 'expense', icon: 'transport' },
+  { id: 'health', name: 'Sức khỏe', type: 'expense', icon: 'health' },
+  { id: 'learning', name: 'Học tập', type: 'expense', icon: 'learning' },
+  { id: 'fun', name: 'Giải trí', type: 'expense', icon: 'entertainment' },
+  { id: 'other-expense', name: 'Khác', type: 'expense', icon: 'other' },
+  { id: 'salary', name: 'Lương', type: 'income', icon: 'salary' },
+  { id: 'bonus', name: 'Thưởng', type: 'income', icon: 'gift' },
+  { id: 'other-income', name: 'Thu nhập khác', type: 'income', icon: 'coins' },
 ];
 
 const $ = (selector) => document.querySelector(selector);
@@ -26,8 +27,10 @@ const money = (value) => `${new Intl.NumberFormat('vi-VN').format(value || 0)} �
 const compactMoney = (value) => value >= 1000000 ? `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 }).format(value / 1000000)}tr` : value >= 1000 ? `${Math.round(value / 1000)}k` : `${value || 0}₫`;
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const iconSvg = (name) => `<svg class="ui-icon" aria-hidden="true"><use href="#icon-${name}" /></svg>`;
-const categoryIconNames = { '◕': 'food', '▣': 'shopping', '⌂': 'home', '◎': 'transport', '✚': 'health', '♧': 'learning', '✦': 'sparkle', '◈': 'diamond', '●': 'circle', '↗': 'arrow-up-right' };
-const categoryIconHtml = (value) => categoryIconNames[value || '◈'] ? iconSvg(categoryIconNames[value || '◈']) : `<span class="category-glyph">${escapeHtml(value)}</span>`;
+const categoryIconHtml = (value, categoryId) => {
+  const symbol = categoryIconSymbol(value, categoryId);
+  return symbol ? iconSvg(symbol) : `<span class="category-glyph">${escapeHtml(value || '◈')}</span>`;
+};
 const todayLocal = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; };
 const currentMonth = () => todayLocal().slice(0, 7);
 const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T12:00:00Z`).getTime()) && new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) === value;
@@ -242,7 +245,7 @@ function transactionHtml(item, actions = false) {
   const saveButton = savedAsTemplate
     ? `<span class="template-saved" aria-label="Đã lưu làm mẫu nhanh" title="Đã lưu làm mẫu nhanh">${iconSvg('star')}<span>Mẫu</span></span>`
     : `<button class="template-save-button" data-save-template="${escapeHtml(item.id)}" aria-label="Lưu giao dịch thành mẫu nhanh" title="Lưu thành mẫu nhanh">${iconSvg('star')}<span>Mẫu</span></button>`;
-  return `<div class="${actions ? 'transaction-item' : 'recent-item'}"><span class="category-badge ${item.type === 'income' ? 'income' : ''}" aria-hidden="true">${categoryIconHtml(category?.icon)}</span><div class="transaction-info"><strong>${escapeHtml(item.note || category?.name || 'Giao dịch')}</strong><span>${escapeHtml(detail)}</span></div><strong class="transaction-amount ${item.type}">${item.type === 'income' ? '+' : '−'}${money(item.amount)}</strong>${actions ? `<div class="transaction-actions">${saveButton}<button class="icon-action" data-edit-transaction="${escapeHtml(item.id)}" aria-label="Sửa giao dịch">${iconSvg('edit')}</button><button class="icon-action" data-delete-transaction="${escapeHtml(item.id)}" aria-label="Xóa giao dịch">${iconSvg('close')}</button></div>` : saveButton}</div>`;
+  return `<div class="${actions ? 'transaction-item' : 'recent-item'}"><span class="category-badge ${item.type === 'income' ? 'income' : ''}" aria-hidden="true">${categoryIconHtml(category?.icon, category?.id)}</span><div class="transaction-info"><strong>${escapeHtml(item.note || category?.name || 'Giao dịch')}</strong><span>${escapeHtml(detail)}</span></div><strong class="transaction-amount ${item.type}">${item.type === 'income' ? '+' : '−'}${money(item.amount)}</strong>${actions ? `<div class="transaction-actions">${saveButton}<button class="icon-action" data-edit-transaction="${escapeHtml(item.id)}" aria-label="Sửa giao dịch">${iconSvg('edit')}</button><button class="icon-action" data-delete-transaction="${escapeHtml(item.id)}" aria-label="Xóa giao dịch">${iconSvg('close')}</button></div>` : saveButton}</div>`;
 }
 
 function renderRecent(items) {
@@ -285,7 +288,7 @@ function renderBudgets(expense) {
     const spent = sum(monthlyTransactions().filter((item) => item.type === 'expense' && item.categoryId === category.id));
     const limit = Number(budget.categories?.[category.id]) || 0;
     const percentage = limit ? Math.round(spent / limit * 100) : 0;
-    return `<div class="category-budget-row"><div class="budget-row-name"><span class="category-badge">${categoryIconHtml(category.icon)}</span><strong>${escapeHtml(category.name)}</strong></div><div class="budget-mini"><span>${money(spent)}${limit ? ` / ${money(limit)} · ${percentage}%` : ' đã chi'}</span><div class="progress-track"><div class="progress-fill ${percentage >= 100 ? 'danger' : percentage >= 80 ? 'warning' : ''}" style="width:${Math.min(percentage, 100)}%"></div></div></div><div class="budget-input-wrap"><input type="number" min="0" step="1000" inputmode="numeric" value="${limit || ''}" data-budget-input="${escapeHtml(category.id)}" aria-label="Ngân sách ${escapeHtml(category.name)}" placeholder="Chưa đặt" /><button data-save-budget="${escapeHtml(category.id)}" aria-label="Lưu ngân sách ${escapeHtml(category.name)}">${iconSvg('check')}</button></div></div>`;
+    return `<div class="category-budget-row"><div class="budget-row-name"><span class="category-badge">${categoryIconHtml(category.icon, category.id)}</span><strong>${escapeHtml(category.name)}</strong></div><div class="budget-mini"><span>${money(spent)}${limit ? ` / ${money(limit)} · ${percentage}%` : ' đã chi'}</span><div class="progress-track"><div class="progress-fill ${percentage >= 100 ? 'danger' : percentage >= 80 ? 'warning' : ''}" style="width:${Math.min(percentage, 100)}%"></div></div></div><div class="budget-input-wrap"><input type="number" min="0" step="1000" inputmode="numeric" value="${limit || ''}" data-budget-input="${escapeHtml(category.id)}" aria-label="Ngân sách ${escapeHtml(category.name)}" placeholder="Chưa đặt" /><button data-save-budget="${escapeHtml(category.id)}" aria-label="Lưu ngân sách ${escapeHtml(category.name)}">${iconSvg('check')}</button></div></div>`;
   }).join('');
 }
 
@@ -294,7 +297,7 @@ function renderCategories() {
     const categories = state.categories.filter((item) => item.type === type);
     $(`#${type}-categories`).innerHTML = categories.length ? categories.map((item) => {
       const count = state.transactions.filter((transaction) => transaction.categoryId === item.id).length;
-      return `<div class="category-row"><span class="category-badge ${type === 'income' ? 'income' : ''}">${categoryIconHtml(item.icon)}</span><strong>${escapeHtml(item.name)}</strong><small>${count} giao dịch</small><button class="icon-action" data-edit-category="${escapeHtml(item.id)}" aria-label="Sửa ${escapeHtml(item.name)}">${iconSvg('edit')}</button><button class="icon-action" data-delete-category="${escapeHtml(item.id)}" aria-label="Xóa ${escapeHtml(item.name)}">${iconSvg('close')}</button></div>`;
+      return `<div class="category-row"><span class="category-badge ${type === 'income' ? 'income' : ''}">${categoryIconHtml(item.icon, item.id)}</span><strong>${escapeHtml(item.name)}</strong><small>${count} giao dịch</small><button class="icon-action" data-edit-category="${escapeHtml(item.id)}" aria-label="Sửa ${escapeHtml(item.name)}">${iconSvg('edit')}</button><button class="icon-action" data-delete-category="${escapeHtml(item.id)}" aria-label="Xóa ${escapeHtml(item.name)}">${iconSvg('close')}</button></div>`;
     }).join('') : '<div class="empty-state">Chưa có danh mục.</div>';
   }
 }
@@ -349,6 +352,23 @@ function openTransaction(id = '', preset = null) {
   $('#transaction-amount').focus();
 }
 
+function renderCategoryIconPicker() {
+  const type = $('#category-type').value;
+  const value = $('#category-icon').value;
+  const categoryId = $('#category-id').value;
+  const selected = categoryIconValue(value, categoryId);
+  const options = categoryIconsForType(type);
+  const selectedIndex = options.findIndex((option) => option.value === selected);
+  if (selectedIndex > 0) options.unshift(options.splice(selectedIndex, 1)[0]);
+  else if (selectedIndex < 0) {
+    options.unshift(CATEGORY_ICON_OPTIONS.find((option) => option.value === selected) || { value, label: 'Đang dùng', symbol: null });
+  }
+  $('#category-icon-picker').innerHTML = options.map((option) => {
+    const active = option.value === selected;
+    return `<button type="button" class="category-icon-choice${active ? ' active' : ''}" data-category-icon="${escapeHtml(option.value)}" aria-label="${escapeHtml(option.label)}" aria-pressed="${active}"><span class="category-badge ${type === 'income' ? 'income' : ''}" aria-hidden="true">${option.symbol ? iconSvg(option.symbol) : categoryIconHtml(option.value, categoryId)}</span><span>${escapeHtml(option.label)}</span></button>`;
+  }).join('');
+}
+
 function openCategory(id = '') {
   $('#category-form').reset();
   $('#category-id').value = id;
@@ -356,8 +376,9 @@ function openCategory(id = '') {
   $('#category-dialog-title').textContent = category ? 'Sửa danh mục' : 'Thêm danh mục';
   $('#category-name').value = category?.name || '';
   $('#category-type').value = category?.type || 'expense';
-  $('#category-icon').value = category?.icon || '◈';
+  $('#category-icon').value = category?.icon || 'other';
   $('#category-type').disabled = !!category && [...state.transactions, ...state.templates, ...state.recurring].some((item) => item.categoryId === id);
+  renderCategoryIconPicker();
   $('#category-dialog').showModal();
   $('#category-name').focus();
 }
@@ -497,6 +518,14 @@ document.addEventListener('click', (event) => {
   }
   if (target.id === 'add-category') openCategory();
   if (target.dataset.editCategory) openCategory(target.dataset.editCategory);
+  if (target.hasAttribute('data-category-icon')) {
+    $('#category-icon').value = target.dataset.categoryIcon;
+    $$('#category-icon-picker [data-category-icon]').forEach((button) => {
+      const active = button === target;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
   if (target.dataset.deleteCategory) {
     const id = target.dataset.deleteCategory, category = categoryById(id);
     if ([...state.transactions, ...state.templates, ...state.recurring].some((item) => item.categoryId === id)) { toast('Danh mục đang được dùng, không thể xóa'); return; }
@@ -666,6 +695,10 @@ $('#category-form').addEventListener('submit', (event) => {
   if (state.categories.some((item) => item.id !== id && item.type === type && item.name.toLocaleLowerCase('vi') === name.toLocaleLowerCase('vi'))) { toast('Danh mục này đã tồn tại'); return; }
   if (existing) Object.assign(existing, { name, type, icon }); else state.categories.push({ id: uid(), name, type, icon });
   $('#category-dialog').close(); saveState(); render(); toast(existing ? 'Đã sửa danh mục' : 'Đã thêm danh mục');
+});
+$('#category-type').addEventListener('change', (event) => {
+  $('#category-icon').value = event.target.value === 'income' ? 'coins' : 'other';
+  renderCategoryIconPicker();
 });
 
 $('#total-budget-form').addEventListener('submit', (event) => {
