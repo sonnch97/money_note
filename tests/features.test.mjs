@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { annualReport, budgetAlerts, dueRecurring, filterTransactions, recurringOccurrence } from '../features.js';
+import { annualCategorySeries, annualReport, budgetAlerts, budgetComparison, dueRecurring, filterTransactions, monthlyExpenseDays, recurringOccurrence } from '../features.js';
 
 const state = {
   categories: [{ id: 'food', name: 'Ăn uống', type: 'expense' }],
@@ -54,4 +54,41 @@ test('báo cáo năm cộng thu chi đúng tháng và danh mục, không lẫn n
   const empty = annualReport(sample, '2024');
   assert.equal(empty.expenseTotal, 0);
   assert.deepEqual(empty.categories, []);
+});
+
+test('lũy kế ngày và lịch nhiệt chỉ dùng khoản chi trong tháng, kể cả tháng hai nhuận', () => {
+  const sample = { transactions: [
+    { type: 'expense', amount: 100, date: '2024-02-01' },
+    { type: 'expense', amount: 150, date: '2024-02-29' },
+    { type: 'income', amount: 900, date: '2024-02-29' },
+    { type: 'expense', amount: 500, date: '2024-03-01' },
+  ] };
+  const report = monthlyExpenseDays(sample, '2024-02');
+  assert.equal(report.days.length, 29);
+  assert.equal(report.offset, 3);
+  assert.deepEqual([report.days[0].amount, report.days[1].cumulative, report.days[28].cumulative, report.total], [100, 100, 250, 250]);
+});
+
+test('cột chồng theo danh mục giữ đúng tổng tháng và gộp danh mục còn lại', () => {
+  const sample = { transactions: [
+    { type: 'expense', categoryId: 'a', amount: 400, date: '2026-01-02' },
+    { type: 'expense', categoryId: 'b', amount: 200, date: '2026-01-03' },
+    { type: 'expense', categoryId: 'c', amount: 100, date: '2026-02-02' },
+    { type: 'income', categoryId: 'salary', amount: 800, date: '2026-02-03' },
+  ] };
+  const series = annualCategorySeries(sample, '2026', 2);
+  assert.deepEqual(series.categories, [{ id: 'a', amount: 400 }, { id: 'b', amount: 200 }, { id: null, amount: 100 }]);
+  assert.deepEqual(series.months[0].segments.map((item) => item.amount), [400, 200, 0]);
+  assert.deepEqual(series.months[1].segments.map((item) => item.amount), [0, 0, 100]);
+  assert.equal(series.months.flatMap((item) => item.segments).reduce((sum, item) => sum + item.amount, 0), 700);
+});
+
+test('so sánh ngân sách chỉ gồm giới hạn đã đặt và tính đúng thực chi', () => {
+  const sample = { transactions: [
+    { type: 'expense', categoryId: 'food', amount: 120, date: '2026-10-02' },
+    { type: 'income', categoryId: 'salary', amount: 900, date: '2026-10-02' },
+    { type: 'expense', categoryId: 'food', amount: 80, date: '2026-09-30' },
+  ], budgets: { '2026-10': { total: 100, categories: { food: 100, home: 0 } } } };
+  assert.deepEqual(budgetComparison(sample, '2026-10'), [{ id: null, limit: 100, spent: 120 }, { id: 'food', limit: 100, spent: 120 }]);
+  assert.deepEqual(budgetComparison(sample, '2026-11'), []);
 });

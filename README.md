@@ -11,6 +11,7 @@ Biểu tượng danh mục được chọn trực quan trong hộp thêm/sửa d
 
 - Ghi khoản thu và chi, xem biểu đồ, đặt ngân sách tháng và theo danh mục. Thẻ **Chênh lệch thu chi tháng** bằng thu nhập trừ chi tiêu trong tháng đang chọn; đây không phải số dư tài khoản tích lũy.
 - Trang **Theo năm** cho chọn năm, xem tổng thu chi, biểu đồ 12 tháng, phân bổ khoản chi theo danh mục và tổng hợp từng tháng. Bấm một tháng để về tổng quan của tháng đó; xuất CSV chỉ gồm giao dịch trong năm đang chọn. Chênh lệch năm bằng tổng thu trừ tổng chi, không phải số dư tài khoản tích lũy.
+- **Năm biểu đồ bổ sung:** đường chi tiêu lũy kế và lịch nhiệt theo ngày ở Tổng quan; thanh so sánh ngân sách với thực chi ở Ngân sách; cột chồng danh mục qua 12 tháng và đường xu hướng theo danh mục ở Theo năm. Chạm một ngày trên lịch nhiệt để lọc giao dịch của ngày đó; chọn danh mục ở biểu đồ xu hướng để xem loại chi khác. Khi chưa có dữ liệu hoặc ngân sách, app hiện hướng dẫn thay vì biểu đồ rỗng.
 - Tìm giao dịch trong mọi tháng, riêng tháng đã chọn hoặc một khoảng ngày; xuất CSV theo bộ lọc hiện tại.
 - Chọn **Lưu làm mẫu nhanh** ngay trong form thêm giao dịch, hoặc bấm ☆ Mẫu ở giao dịch đã ghi. Bấm mẫu để mở giao dịch mới với số tiền, danh mục và ghi chú đã điền sẵn; kiểm tra rồi lưu.
 - App hiển thị cảnh báo khi chi tiêu đạt từ 80% ngân sách, và cảnh báo mạnh hơn khi đạt hoặc vượt 100%.

@@ -61,7 +61,7 @@
       <aside class="sidebar" aria-label="Điều hướng chính">
         <a class="brand" href="#overview" aria-label="Money Note, về tổng quan">
           <span class="brand-mark" aria-hidden="true"><svg class="ui-icon"><use href="#icon-arrow-up-right" /></svg></span>
-          <span class="brand-text"><strong>Money <span class="brand-accent">Note</span></strong><small>PERSONAL FINANCE</small><span class="brand-version" data-app-version>v1.3.0</span></span>
+          <span class="brand-text"><strong>Money <span class="brand-accent">Note</span></strong><small>PERSONAL FINANCE</small><span class="brand-version" data-app-version>v1.4.0</span></span>
         </a>
         <div class="sidebar-group-label">KHÔNG GIAN CỦA BẠN</div>
         <nav class="desktop-nav" aria-label="Các trang">
@@ -82,7 +82,7 @@
 
       <div class="main-wrap">
         <header class="topbar">
-          <div class="mobile-brand"><span class="brand-mark"><svg class="ui-icon"><use href="#icon-arrow-up-right" /></svg></span><span class="mobile-brand-text"><strong>Money Note</strong><small data-app-version>v1.3.0</small></span></div>
+          <div class="mobile-brand"><span class="brand-mark"><svg class="ui-icon"><use href="#icon-arrow-up-right" /></svg></span><span class="mobile-brand-text"><strong>Money Note</strong><small data-app-version>v1.4.0</small></span></div>
           <div class="breadcrumb">TÀI CHÍNH CÁ NHÂN <span>/</span> <strong id="breadcrumb-current">Tổng quan</strong></div>
           <div class="topbar-actions">
             <button id="sync-status-button" class="sync-status-button" data-sync-open title="Trạng thái đồng bộ"><svg class="ui-icon" aria-hidden="true"><use href="#icon-cloud" /></svg><span id="sync-status">Chỉ lưu trên thiết bị</span></button>
@@ -103,6 +103,7 @@
               <section class="panel cashflow-panel"><div class="panel-heading"><div><p class="eyebrow">XU HƯỚNG</p><h2>Dòng tiền 6 tháng</h2></div><div class="legend"><span><i class="legend-dot legend-income"></i> Thu</span><span><i class="legend-dot legend-expense"></i> Chi</span></div></div><div id="cashflow-chart" class="cashflow-chart" aria-label="Biểu đồ thu chi 6 tháng"></div></section>
               <section class="panel spend-panel"><div class="panel-heading"><div><p class="eyebrow">PHÂN BỔ</p><h2>Chi tiêu theo danh mục</h2></div></div><div id="category-chart" class="category-chart"></div></section>
             </div>
+            <div class="insights-grid"><section class="panel cumulative-panel"><div class="panel-heading"><div><p class="eyebrow">THEO NGÀY</p><h2>Chi tiêu lũy kế</h2></div></div><div id="cumulative-chart"></div><p id="cumulative-caption" class="chart-caption"></p></section><section class="panel heatmap-panel"><div class="panel-heading"><div><p class="eyebrow">NHỊP CHI TIÊU</p><h2>Lịch nhiệt trong tháng</h2></div></div><div id="expense-heatmap"></div><p class="chart-caption">Chạm một ngày để xem giao dịch của ngày đó. Màu đậm hơn là chi nhiều hơn.</p></section></div>
             <div class="dashboard-grid lower-grid">
               <section class="panel"><div class="panel-heading"><div><p class="eyebrow">KẾ HOẠCH</p><h2>Ngân sách tháng</h2></div><button class="text-link" data-view="budgets">Xem chi tiết →</button></div><div id="overview-budget"></div><div id="overview-budget-alerts" aria-live="polite"></div></section>
               <section class="panel"><div class="panel-heading"><div><p class="eyebrow">HOẠT ĐỘNG</p><h2>Giao dịch gần đây</h2></div><button class="text-link" data-view="transactions">Xem tất cả →</button></div><div id="recent-transactions"></div></section>
@@ -121,6 +122,7 @@
           <section id="budgets" class="view" aria-labelledby="budgets-title">
             <div class="page-heading"><div><p class="eyebrow">KẾ HOẠCH</p><h1 id="budgets-title">Ngân sách tháng</h1><p class="subtitle">Đặt giới hạn để chi tiêu có chủ đích trong <span data-month-label></span>.</p></div></div>
             <div class="budget-layout"><section class="panel budget-main"><div class="panel-heading"><div><p class="eyebrow">TỔNG NGÂN SÁCH</p><h2>Giới hạn chi tiêu</h2></div><span class="panel-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-budget" /></svg></span></div><form id="total-budget-form" class="budget-form"><label for="total-budget-input">Ngân sách tháng (₫)</label><div class="inline-form"><input id="total-budget-input" type="number" min="0" step="1000" inputmode="numeric" placeholder="Ví dụ: 10.000.000" /><button class="button button-primary" type="submit">Lưu ngân sách</button></div></form><div id="total-budget-progress"></div><div id="budget-alerts-detail" aria-live="polite"></div></section><section class="panel budget-side"><p class="eyebrow">GỢI Ý NHỎ</p><h2>Chi tiêu chủ động hơn</h2><p>Đặt ngân sách riêng cho những danh mục dễ vượt mức. Bạn có thể sửa bất kỳ lúc nào; số tiền đã chi sẽ được cập nhật tự động.</p><span class="tip-illustration" aria-hidden="true">◎</span></section></div>
+            <section class="panel budget-comparison-panel"><div class="panel-heading"><div><p class="eyebrow">SO SÁNH</p><h2>Ngân sách và thực chi</h2></div><div class="legend"><span><i class="legend-dot legend-income"></i> Ngân sách</span><span><i class="legend-dot legend-expense"></i> Đã chi</span></div></div><div id="budget-comparison"></div></section>
             <section class="panel category-budget-panel"><div class="panel-heading"><div><p class="eyebrow">CHI TIẾT</p><h2>Ngân sách theo danh mục</h2></div></div><div id="category-budgets"></div></section>
           </section>
 
@@ -132,6 +134,7 @@
               <article class="summary-card"><div class="card-top"><span>CHÊNH LỆCH THU CHI</span><span class="metric-icon income"><svg class="ui-icon" aria-hidden="true"><use href="#icon-year" /></svg></span></div><strong id="year-net-total">0 ₫</strong><p>Thu nhập trừ chi tiêu trong năm</p></article>
             </div>
             <div class="yearly-grid"><section class="panel yearly-chart-panel"><div class="panel-heading"><div><p class="eyebrow">12 THÁNG</p><h2>Thu và chi từng tháng</h2></div><div class="legend"><span><i class="legend-dot legend-income"></i> Thu</span><span><i class="legend-dot legend-expense"></i> Chi</span></div></div><div id="yearly-chart" class="yearly-chart" role="img" aria-label="Biểu đồ thu chi 12 tháng"></div></section><section class="panel yearly-categories-panel"><div class="panel-heading"><div><p class="eyebrow">PHÂN BỔ</p><h2>Chi theo danh mục</h2></div></div><div id="yearly-categories"></div></section></div>
+            <div class="yearly-extra-grid"><section class="panel"><div class="panel-heading"><div><p class="eyebrow">CƠ CẤU CHI</p><h2>Danh mục qua 12 tháng</h2></div></div><div id="yearly-stacked"></div><div id="yearly-stacked-legend" class="stacked-legend"></div></section><section class="panel"><div class="panel-heading"><div><p class="eyebrow">XU HƯỚNG DANH MỤC</p><h2>Chi tiêu theo từng loại</h2></div></div><label class="trend-select-label" for="trend-category">Danh mục <select id="trend-category" aria-label="Chọn danh mục để xem xu hướng"></select></label><div id="category-trend"></div><p id="category-trend-caption" class="chart-caption"></p></section></div>
             <section class="panel yearly-months-panel"><div class="panel-heading"><div><p class="eyebrow">CHI TIẾT</p><h2>Tổng hợp từng tháng</h2></div></div><div class="yearly-months-head"><span>Tháng</span><span>Thu</span><span>Chi</span><span>Chênh lệch</span></div><div id="yearly-months"></div></section>
           </section>
 

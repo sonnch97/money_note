@@ -1,4 +1,4 @@
-const CACHE_NAME = 'moneynote-shell-v13';
+const CACHE_NAME = 'moneynote-shell-v14';
 const ASSETS = ['./', './index.html', './styles.css', './visual.css', './app.js', './category-icons.js', './version.js', './features.js', './backup.js', './sync.js', './sync-data.js', './sync-config.js', './vendor/supabase.js', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './fonts/LilitaOne-Regular.ttf', './fonts/Nunito-wght.ttf'];
 self.addEventListener('install', (event) => { event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS.map((asset) => new Request(asset, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (event) => { event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))).then(() => self.clients.claim())); });

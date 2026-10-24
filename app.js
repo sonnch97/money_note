@@ -1,7 +1,7 @@
 import { createBackup, parseBackup } from './backup.js';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './sync-config.js';
 import { MoneyNoteSync, diffRecords, LOCAL_DIRTY_KEY } from './sync.js';
-import { annualReport, budgetAlerts, dueRecurring, filterTransactions } from './features.js';
+import { annualCategorySeries, annualReport, budgetAlerts, budgetComparison, dueRecurring, filterTransactions, monthlyExpenseDays } from './features.js';
 import { CATEGORY_ICON_OPTIONS, categoryIconSymbol, categoryIconValue, categoryIconsForType } from './category-icons.js';
 import { APP_VERSION } from './version.js';
 
@@ -61,6 +61,7 @@ let state = loadState();
 let lastSavedState = structuredClone(state);
 let selectedMonth = currentMonth();
 let selectedYear = selectedMonth.slice(0, 4);
+let selectedTrendCategory = '';
 let activeView = 'overview';
 let toastTimer;
 let pendingRestore;
@@ -196,6 +197,7 @@ function render() {
   $('#income-count').textContent = incomeItems.length;
   $('#expense-count').textContent = expenseItems.length;
   renderCashflow();
+  renderDailyInsights();
   renderYearly();
   renderCategoryChart(expenseItems);
   renderOverviewBudget(expense);
@@ -207,6 +209,36 @@ function render() {
   renderCategories();
   renderTemplates();
   renderRecurring();
+}
+
+function lineChart(values, labels, color, ariaLabel, markerIndexes = []) {
+  const width = window.matchMedia('(max-width:640px)').matches ? 380 : 716;
+  const right = width - 37;
+  const max = Math.max(1, ...values);
+  const x = (index) => 37 + index / Math.max(1, values.length - 1) * (right - 37);
+  const y = (value) => 164 - value / max * 132;
+  const points = values.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(' ');
+  const area = `${x(0)},164 ${points} ${x(values.length - 1)},164`;
+  const ticks = [...new Set([0, Math.floor((values.length - 1) / 2), values.length - 1])];
+  return `<svg class="insight-line-chart" viewBox="0 0 ${width} 200" role="img" aria-label="${escapeHtml(ariaLabel)}"><line x1="37" y1="164" x2="${right}" y2="164" class="chart-axis"/><line x1="37" y1="98" x2="${right}" y2="98" class="chart-grid"/><line x1="37" y1="32" x2="${right}" y2="32" class="chart-grid"/><text x="35" y="24" class="chart-value">${compactMoney(max)}</text><polygon points="${area}" fill="${color}" opacity=".12"/><polyline points="${points}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${markerIndexes.map((index) => `<circle cx="${x(index).toFixed(1)}" cy="${y(values[index]).toFixed(1)}" r="4" fill="${color}" stroke="#fff" stroke-width="2"><title>${escapeHtml(labels[index])}: ${money(values[index])}</title></circle>`).join('')}${ticks.map((index) => `<text x="${x(index).toFixed(1)}" y="188" text-anchor="middle" class="chart-tick">${escapeHtml(labels[index])}</text>`).join('')}</svg>`;
+}
+
+function renderDailyInsights() {
+  const report = monthlyExpenseDays(state, selectedMonth);
+  const spendingDays = report.days.filter((day) => day.amount > 0).length;
+  $('#cumulative-chart').innerHTML = report.total
+    ? lineChart(report.days.map((day) => day.cumulative), report.days.map((day) => `Ngày ${day.day}`), '#ca6685', `Chi tiêu lũy kế ${monthName(selectedMonth)}: ${money(report.total)}`, report.days.flatMap((day, index) => day.amount ? [index] : []))
+    : '<div class="empty-state"><strong>Chưa có khoản chi trong tháng</strong>Biểu đồ lũy kế sẽ xuất hiện khi bạn ghi khoản chi.</div>';
+  $('#cumulative-caption').textContent = report.total ? `${spendingDays} ngày có chi · Tổng ${money(report.total)}` : '';
+
+  const max = Math.max(1, ...report.days.map((day) => day.amount));
+  const weekdayNames = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+  const blanks = Array.from({ length: report.offset }, () => '<span class="heatmap-blank" aria-hidden="true"></span>').join('');
+  $('#expense-heatmap').innerHTML = `<div class="heatmap-weekdays">${weekdayNames.map((name) => `<span>${name}</span>`).join('')}</div><div class="heatmap-days">${blanks}${report.days.map((day) => {
+    const level = day.amount ? Math.max(1, Math.ceil(day.amount / max * 4)) : 0;
+    const date = `${selectedMonth}-${String(day.day).padStart(2, '0')}`;
+    return `<button class="heatmap-day level-${level}" data-heat-date="${date}" aria-label="Ngày ${day.day}, chi ${money(day.amount)}" title="${dateName(date)} · Chi ${money(day.amount)}">${day.day}</button>`;
+  }).join('')}</div><div class="heatmap-legend"><span>Ít chi</span>${[0, 1, 2, 3, 4].map((level) => `<i class="level-${level}"></i>`).join('')}<span>Nhiều chi</span></div>`;
 }
 
 function renderYearly() {
@@ -236,6 +268,34 @@ function renderYearly() {
     : '<div class="empty-state"><strong>Chưa có khoản chi trong năm này</strong>Chọn năm khác hoặc ghi khoản chi để xem phân bổ.</div>';
 
   $('#yearly-months').innerHTML = report.months.map((month) => `<button class="yearly-month-row" data-year-month="${selectedYear}-${String(month.number).padStart(2, '0')}" title="Xem tháng ${month.number}/${selectedYear}"><span>Tháng ${month.number}</span><span>${money(month.income)}</span><span class="yearly-expense-value">${money(month.expense)}</span><span class="${month.income - month.expense < 0 ? 'yearly-negative' : ''}">${money(month.income - month.expense)}</span></button>`).join('');
+  renderYearlyStacked(report);
+  renderCategoryTrend(report);
+}
+
+function renderYearlyStacked(report) {
+  const series = annualCategorySeries(state, selectedYear);
+  const max = Math.max(1, ...report.months.map((month) => month.expense));
+  $('#yearly-stacked').innerHTML = report.expenseTotal
+    ? `<div class="stacked-chart" role="img" aria-label="Chi tiêu theo danh mục của 12 tháng năm ${selectedYear}">${series.months.map((month) => {
+      const total = month.segments.reduce((sum, item) => sum + item.amount, 0);
+      return `<div class="stacked-col"><div class="stacked-bar-area"><div class="stacked-bar" style="height:${total / max * 100}%">${month.segments.map((segment, index) => segment.amount ? `<span style="height:${segment.amount / total * 100}%;background:${palette[index % palette.length]}" title="Tháng ${month.number} · ${escapeHtml(segment.id === null ? 'Danh mục khác' : categoryById(segment.id)?.name || 'Danh mục đã xóa')}: ${money(segment.amount)}"></span>` : '').join('')}</div></div><span>T${month.number}</span></div>`;
+    }).join('')}</div>`
+    : '<div class="empty-state"><strong>Chưa có khoản chi trong năm</strong>Biểu đồ danh mục sẽ xuất hiện khi bạn ghi khoản chi.</div>';
+  $('#yearly-stacked-legend').innerHTML = report.expenseTotal ? series.categories.map(({ id }, index) => `<span><i style="background:${palette[index % palette.length]}"></i>${escapeHtml(id === null ? 'Danh mục khác' : categoryById(id)?.name || 'Danh mục đã xóa')}</span>`).join('') : '';
+}
+
+function renderCategoryTrend(report) {
+  const categoryIds = [...new Set([...state.categories.filter((item) => item.type === 'expense').map((item) => item.id), ...report.categories.map((item) => item.id)])];
+  if (!categoryIds.includes(selectedTrendCategory)) selectedTrendCategory = report.categories[0]?.id || categoryIds[0] || '';
+  $('#trend-category').innerHTML = categoryIds.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(categoryById(id)?.name || 'Danh mục đã xóa')}</option>`).join('');
+  $('#trend-category').value = selectedTrendCategory;
+  $('#trend-category').disabled = !categoryIds.length;
+  const values = Array.from({ length: 12 }, (_, index) => report.transactions.filter((item) => item.type === 'expense' && item.categoryId === selectedTrendCategory && Number(item.date.slice(5, 7)) === index + 1).reduce((total, item) => total + item.amount, 0));
+  const total = values.reduce((sum, value) => sum + value, 0);
+  $('#category-trend').innerHTML = total
+    ? lineChart(values, values.map((_, index) => `T${index + 1}`), '#c96787', `Xu hướng ${categoryById(selectedTrendCategory)?.name || 'danh mục đã xóa'} năm ${selectedYear}, tổng ${money(total)}`, values.flatMap((value, index) => value ? [index] : []))
+    : '<div class="empty-state"><strong>Chưa có khoản chi cho danh mục này</strong>Chọn danh mục khác hoặc thêm giao dịch trong năm.</div>';
+  $('#category-trend-caption').textContent = total ? `Tổng ${money(total)} trong năm ${selectedYear}` : '';
 }
 
 function renderCashflow() {
@@ -322,6 +382,12 @@ function renderBudgets(expense) {
     const percentage = limit ? Math.round(spent / limit * 100) : 0;
     return `<div class="category-budget-row"><div class="budget-row-name"><span class="category-badge">${categoryIconHtml(category.icon, category.id)}</span><strong>${escapeHtml(category.name)}</strong></div><div class="budget-mini"><span>${money(spent)}${limit ? ` / ${money(limit)} · ${percentage}%` : ' đã chi'}</span><div class="progress-track"><div class="progress-fill ${percentage >= 100 ? 'danger' : percentage >= 80 ? 'warning' : ''}" style="width:${Math.min(percentage, 100)}%"></div></div></div><div class="budget-input-wrap"><input type="number" min="0" step="1000" inputmode="numeric" value="${limit || ''}" data-budget-input="${escapeHtml(category.id)}" aria-label="Ngân sách ${escapeHtml(category.name)}" placeholder="Chưa đặt" /><button data-save-budget="${escapeHtml(category.id)}" aria-label="Lưu ngân sách ${escapeHtml(category.name)}">${iconSvg('check')}</button></div></div>`;
   }).join('');
+  const rows = budgetComparison(state, selectedMonth);
+  $('#budget-comparison').innerHTML = rows.length ? rows.map((row) => {
+    const scale = Math.max(row.limit, row.spent);
+    const name = row.id === null ? 'Tổng ngân sách' : categoryById(row.id)?.name || 'Danh mục đã xóa';
+    return `<div class="budget-compare-row"><div class="budget-compare-heading"><strong>${escapeHtml(name)}</strong><span>${Math.round(row.spent / row.limit * 100)}% · ${row.spent > row.limit ? `Vượt ${money(row.spent - row.limit)}` : `Còn ${money(row.limit - row.spent)}`}</span></div><div class="budget-compare-bar"><span class="budget-compare-limit" style="width:${row.limit / scale * 100}%" title="Ngân sách: ${money(row.limit)}"></span><span class="budget-compare-spent" style="width:${row.spent / scale * 100}%" title="Đã chi: ${money(row.spent)}"></span></div><div class="budget-compare-values"><span>Ngân sách ${money(row.limit)}</span><span>Đã chi ${money(row.spent)}</span></div></div>`;
+  }).join('') : '<div class="empty-state"><strong>Chưa đặt ngân sách</strong>Đặt ngân sách tổng hoặc theo danh mục để xem so sánh.</div>';
 }
 
 function renderCategories() {
@@ -510,6 +576,17 @@ function exportCsv(items, filename) {
 document.addEventListener('click', (event) => {
   const target = event.target.closest('button'); if (!target) return;
   if (target.dataset.view) setView(target.dataset.view);
+  if (target.dataset.heatDate) {
+    $('#search-input').value = '';
+    $('#type-filter').value = 'all';
+    $('#category-filter').value = 'all';
+    $('#period-filter').value = 'range';
+    $('#date-range-fields').hidden = false;
+    $('#date-from').value = target.dataset.heatDate;
+    $('#date-to').value = target.dataset.heatDate;
+    renderTransactions();
+    setView('transactions');
+  }
   if (target.dataset.yearMonth) { selectedMonth = target.dataset.yearMonth; render(); setView('overview'); }
   if (target.hasAttribute('data-add')) openTransaction();
   if (target.hasAttribute('data-close')) target.closest('dialog').close();
@@ -747,6 +824,7 @@ $('#month-input').addEventListener('change', (event) => {
   selectedMonth = event.target.value; selectedYear = selectedMonth.slice(0, 4); render();
 });
 $('#year-input').addEventListener('change', (event) => { selectedYear = event.target.value; renderYearly(); });
+$('#trend-category').addEventListener('change', (event) => { selectedTrendCategory = event.target.value; renderCategoryTrend(annualReport(state, selectedYear)); });
 for (const selector of ['#search-input', '#type-filter', '#category-filter']) $(selector).addEventListener(selector === '#search-input' ? 'input' : 'change', renderTransactions);
 $('#period-filter').addEventListener('change', (event) => { $('#date-range-fields').hidden = event.target.value !== 'range'; renderTransactions(); });
 for (const selector of ['#date-from', '#date-to']) $(selector).addEventListener('change', renderTransactions);

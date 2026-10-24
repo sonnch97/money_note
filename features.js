@@ -37,6 +37,54 @@ export function annualReport(state, year) {
   return { transactions, months, incomeTotal, expenseTotal, categories };
 }
 
+export function monthlyExpenseDays(state, month) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const length = new Date(year, monthNumber, 0).getDate();
+  const offset = (new Date(Date.UTC(year, monthNumber - 1, 1)).getUTCDay() + 6) % 7;
+  const days = Array.from({ length }, (_, index) => ({ day: index + 1, amount: 0, cumulative: 0 }));
+  for (const item of state.transactions) {
+    if (item.type !== 'expense' || item.date.slice(0, 7) !== month) continue;
+    const day = days[Number(item.date.slice(8, 10)) - 1];
+    if (day) day.amount += item.amount;
+  }
+  let total = 0;
+  for (const day of days) { total += day.amount; day.cumulative = total; }
+  return { days, offset, total };
+}
+
+export function annualCategorySeries(state, year, limit = 5) {
+  const report = annualReport(state, year);
+  const top = report.categories.slice(0, limit);
+  const remaining = report.categories.slice(limit);
+  const categories = remaining.length
+    ? [...top, { id: null, amount: remaining.reduce((sum, item) => sum + item.amount, 0) }]
+    : top;
+  const topIds = new Set(top.map((item) => item.id));
+  const months = Array.from({ length: 12 }, (_, index) => ({ number: index + 1, segments: categories.map(({ id }) => ({ id, amount: 0 })) }));
+  for (const item of report.transactions) {
+    if (item.type !== 'expense') continue;
+    const month = months[Number(item.date.slice(5, 7)) - 1];
+    if (!month) continue;
+    const id = topIds.has(item.categoryId) ? item.categoryId : null;
+    const segment = month.segments.find((entry) => entry.id === id);
+    if (segment) segment.amount += item.amount;
+  }
+  return { categories, months };
+}
+
+export function budgetComparison(state, month) {
+  const budget = state.budgets[month] || {};
+  const expenses = state.transactions.filter((item) => item.type === 'expense' && item.date.slice(0, 7) === month);
+  const totalSpent = expenses.reduce((sum, item) => sum + item.amount, 0);
+  const rows = [];
+  if (Number(budget.total) > 0) rows.push({ id: null, limit: Number(budget.total), spent: totalSpent });
+  for (const [id, value] of Object.entries(budget.categories || {})) {
+    const limit = Number(value);
+    if (limit > 0) rows.push({ id, limit, spent: expenses.filter((item) => item.categoryId === id).reduce((sum, item) => sum + item.amount, 0) });
+  }
+  return rows;
+}
+
 export function budgetAlerts(state, month) {
   const budget = state.budgets[month];
   if (!budget) return [];
