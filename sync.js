@@ -15,6 +15,8 @@ export class MoneyNoteSync {
     this.active = false;
     this.userId = null;
     this.generation = 0;
+    this.lastSyncedAt = null;
+    this.lastError = '';
   }
 
   readQueue(userId) {
@@ -87,7 +89,7 @@ export class MoneyNoteSync {
       this.subscribe();
       await this.syncNow();
     } catch (error) {
-      if (generation === this.generation) this.setStatus(`Lỗi đồng bộ: ${error.message || 'không thể kết nối'}`);
+      if (generation === this.generation) { this.lastError = error.message || 'không thể kết nối'; this.setStatus(`Lỗi đồng bộ: ${this.lastError}`); }
     }
   }
 
@@ -142,9 +144,11 @@ export class MoneyNoteSync {
         if (revision !== this.revision) { this.resync = true; return; }
         this.acceptState(stateFromRecords(rows, [...this.queue.values()], this.defaults));
         this.onConflicts(this.getConflicts());
+        this.lastSyncedAt = new Date().toISOString();
+        this.lastError = '';
         this.persistQueue();
       } catch (error) {
-        if (generation === this.generation) this.setStatus(`Lỗi đồng bộ: ${error.message || 'không thể kết nối'}`);
+        if (generation === this.generation) { this.lastError = error.message || 'không thể kết nối'; this.setStatus(`Lỗi đồng bộ: ${this.lastError}`); }
       }
     })();
     this.syncPromise = run;
@@ -157,6 +161,10 @@ export class MoneyNoteSync {
 
   getConflicts() {
     return [...this.conflicts.keys()].filter((key) => this.queue.has(key)).map((key) => ({ key, local: this.queue.get(key), remote: this.remoteRows.get(key) || null }));
+  }
+
+  getDiagnostics() {
+    return { queued: this.queue.size, conflicts: this.getConflicts().length, lastSyncedAt: this.lastSyncedAt, lastError: this.lastError };
   }
 
   resolveConflict(key, choice) {

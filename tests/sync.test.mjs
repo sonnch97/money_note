@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MoneyNoteSync } from '../sync.js';
 import { diffRecords, recordKey, stateFromRecords } from '../sync-data.js';
+import { DEFAULT_ACCOUNT } from '../finance.js';
 
 const defaults = [{ id: 'food', name: 'Ăn uống', type: 'expense', icon: '◕' }];
 const empty = () => ({ transactions: [], categories: structuredClone(defaults), budgets: {}, templates: [], recurring: [] });
@@ -105,6 +106,24 @@ test('ngân sách tháng và theo danh mục là hai hàng riêng', () => {
   next.budgets['2026-10'] = { total: 1000000, categories: { food: 200000 } };
   const changes = diffRecords(empty(), next);
   assert.deepEqual(changes.map((row) => row.kind).sort(), ['budget_total', 'category_budget']);
+});
+
+test('ví, chuyển tiền, mục tiêu và ngân sách năm dùng các loại bản ghi Supabase hiện có', () => {
+  const before = empty(), next = { ...empty(), accounts: [DEFAULT_ACCOUNT], transfers: [{ id: 'move', fromAccountId: 'wallet-default', toAccountId: 'bank', amount: 20000, date: '2026-10-23', note: '' }], goals: [{ id: 'goal', name: 'Dự phòng', targetAmount: 1000000, savedAmount: 200000, deadline: '' }], annualBudgets: { '2026': 9000000 } };
+  const changes = diffRecords(before, next);
+  assert.deepEqual(changes.map((row) => [row.kind, row.record_id]), [['transaction', 'move'], ['category', 'wallet-default'], ['template', 'goal'], ['budget_total', 'year:2026']]);
+  const restored = stateFromRecords(changes, [], defaults);
+  assert.deepEqual(restored.accounts, [DEFAULT_ACCOUNT]);
+  assert.deepEqual(restored.transfers, next.transfers);
+  assert.deepEqual(restored.goals, next.goals);
+  assert.deepEqual(restored.annualBudgets, next.annualBudgets);
+});
+
+test('dữ liệu đám mây cũ tự có Ví chính cho giao dịch chưa gán ví', () => {
+  const old = transaction('old', 10000);
+  const restored = stateFromRecords([{ kind: 'transaction', record_id: old.id, payload: old, deleted: false }], [], defaults);
+  assert.deepEqual(restored.accounts, [DEFAULT_ACCOUNT]);
+  assert.equal(restored.transactions[0].accountId, undefined);
 });
 
 test('gộp lần đầu chỉ gửi mục chưa có, vẫn giữ giao dịch trên đám mây', async () => {

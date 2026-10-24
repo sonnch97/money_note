@@ -37,6 +37,7 @@ test('PWA kiểm tra lại bản trên mạng và vẫn dùng cache khi ngoại 
   await installed;
   assert.ok(installRequests.length > 0);
   assert.ok(installRequests.every((request) => request.cache === 'reload'));
+  assert.ok(['./finance.js', './csv-import.js'].every((asset) => installRequests.some((request) => request.url === asset)));
 
   const request = { method: 'GET', url: 'https://example.com/app.js' };
   let response;

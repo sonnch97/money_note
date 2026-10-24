@@ -239,3 +239,56 @@ button .ui-icon,span .ui-icon{pointer-events:none}
 @media(max-width:1150px){.insights-grid,.yearly-extra-grid{grid-template-columns:1fr}}
 @media(max-width:640px){.insights-grid,.yearly-extra-grid{gap:12px;margin-bottom:12px}.heatmap-weekdays,.heatmap-days{gap:5px}.heatmap-day,.heatmap-blank{border-radius:7px;font-size:10px}.stacked-chart{height:190px;gap:3px}.stacked-bar-area{height:150px}.stacked-col{font-size:9px}.budget-comparison-panel .panel-heading{align-items:flex-start}.budget-comparison-panel .legend{gap:7px;flex-direction:column;align-items:flex-start}}
 @media(prefers-reduced-motion:reduce){.heatmap-day{transition:none}}
+.chart-col,.yearly-chart-col{border:0;background:transparent;padding:0;font:inherit;cursor:pointer}
+.chart-col:focus-visible,.yearly-chart-col:focus-visible,.category-legend-row:focus-visible,.yearly-category-row:focus-visible,.stacked-bar button:focus-visible{outline:3px solid #95c9a1;outline-offset:2px;border-radius:5px}
+.category-legend-row{width:100%;border:0;background:transparent;padding:0;text-align:left;cursor:pointer}
+.category-legend-row:hover .legend-name{text-decoration:underline}
+.yearly-category-row{width:100%;border-top:0;border-left:0;border-right:0;background:transparent;text-align:left;cursor:pointer}
+.yearly-category-row:hover{background:#f9fbf6}
+.stacked-bar button{display:block;width:100%;min-height:0;border:0;padding:0;cursor:pointer}
+.annual-budget-panel{margin-bottom:17px}
+.annual-budget-panel .inline-form{max-width:550px}
+.annual-budget-panel .inline-form input{min-width:0;flex:1;height:40px;border:1px solid #dce7da;border-radius:9px;padding:0 12px;color:#244b3b}
+.annual-budget-panel #annual-budget-progress{margin-top:17px}
+.rollover-choice{display:flex!important;align-items:center;gap:8px;margin:14px 0 2px!important;color:#466a52!important;line-height:1.4}
+.rollover-choice input{height:auto;width:16px;accent-color:#326e51}
+.wallet-summary{padding:24px;margin-bottom:17px;border:1px solid #d9e9c4;border-radius:18px;background:linear-gradient(130deg,#def1b4,#eef8db);color:#294d38;box-shadow:var(--shadow)}
+.wallet-summary strong{display:block;font:800 clamp(26px,3vw,38px) Nunito,Arial,sans-serif;overflow-wrap:anywhere}
+.wallet-summary strong.negative,.wallet-balance.negative{color:#bd4e70}
+.wallet-summary span{display:block;margin-top:2px;font-size:12px;font-weight:800}
+.wallet-summary p{margin:10px 0 0;color:#65826a;font-size:11px;line-height:1.5}
+.wallet-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:17px;margin-bottom:17px}
+.wallet-row{display:flex;align-items:center;gap:9px;padding:12px 0;border-bottom:1px solid #edf2eb}
+.wallet-row:last-child{border-bottom:0}
+.wallet-row-icon{display:grid;place-items:center;width:35px;height:35px;min-width:35px;border-radius:10px;background:#edf6e7;color:#44835b}
+.wallet-row-icon .ui-icon{width:18px;height:18px}
+.wallet-row>div{min-width:95px;flex:1}
+.wallet-row>div strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#294b3c;font-size:12px}
+.wallet-row small{display:block;color:#94a59a;font-size:10px;margin-top:3px}
+.wallet-balance{white-space:nowrap;color:#284b3c;font-size:12px}
+.goal-row{padding:16px 0;border-bottom:1px solid #edf2eb}
+.goal-row:last-child{border-bottom:0}
+.goal-heading,.goal-foot{display:flex;justify-content:space-between;gap:12px}
+.goal-heading strong{color:#284b3c;font-size:13px}
+.goal-heading span,.goal-foot{color:#859a8b;font-size:10px}
+.goal-progress{height:9px;margin:10px 0 7px;border-radius:20px;background:#edf2e9;overflow:hidden}
+.goal-progress i{display:block;height:100%;border-radius:20px;background:linear-gradient(90deg,#9fd477,#d5e890)}
+.goal-actions{display:flex;gap:16px;margin-top:10px}
+.goals-panel .chart-caption{margin:-4px 0 4px}
+.import-dialog{width:min(840px,calc(100vw - 28px))}
+.csv-mapping{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.csv-mapping label{display:grid;gap:5px;color:#62806c;font-size:10px;font-weight:800}
+.csv-mapping select{min-width:0;height:38px;border:1px solid #dce7da;border-radius:8px;padding:0 9px;background:#fff;color:#27483b;font-size:11px}
+.csv-preview{max-height:310px;overflow:auto;border:1px solid #e4ede3;border-radius:10px}
+.csv-preview-row{display:grid;grid-template-columns:20px minmax(0,1fr) auto auto;align-items:center;gap:8px;padding:10px;border-bottom:1px solid #edf2eb;color:#315344;font-size:11px}
+.csv-preview-row:last-child{border-bottom:0}
+.csv-preview-row.invalid{color:#b5485d;background:#fff6f7}
+.csv-preview-row.duplicate{background:#fffaf0}
+.csv-preview-row strong{white-space:nowrap;color:#bc5879}
+.csv-preview-row em{color:#ae7b47;font-style:normal;font-weight:800}
+.toast{display:flex;align-items:center;gap:12px}
+#undo-delete{border:0;background:#d2ed79;color:#214939;padding:5px 9px;border-radius:6px;font-size:11px;font-weight:900;white-space:nowrap}
+#undo-delete[hidden]{display:none}
+@media(max-width:1150px){.wallet-grid{grid-template-columns:1fr}}
+@media(max-width:640px){.wallet-grid{gap:12px;margin-bottom:12px}.wallet-row{display:grid;grid-template-columns:35px minmax(0,1fr) 28px 28px;gap:5px 7px}.wallet-row-icon{grid-column:1;grid-row:1/3;align-self:start}.wallet-row>div{grid-column:2;grid-row:1;min-width:0}.wallet-balance{grid-column:2/-1;grid-row:2;justify-self:start}.wallet-row [data-edit-account],.wallet-row [data-edit-transfer]{grid-column:3;grid-row:1}.wallet-row [data-delete-account],.wallet-row [data-delete-transfer]{grid-column:4;grid-row:1}.csv-mapping{grid-template-columns:1fr}.csv-preview-row{grid-template-columns:20px minmax(0,1fr) auto}.csv-preview-row em{grid-column:2}.annual-budget-panel{margin-bottom:12px}.annual-budget-panel .inline-form{display:flex;flex-direction:column}.annual-budget-panel .inline-form input{width:100%;min-height:40px;flex:auto}}
+@media(max-width:420px){.mobile-nav{padding-left:4px;padding-right:4px}.mobile-nav button{font-size:7px}.mobile-nav button span .ui-icon{width:17px;height:17px}.mobile-nav .mobile-add{width:42px;height:42px;min-width:42px;flex-basis:42px}.wallet-balance{font-size:11px}}

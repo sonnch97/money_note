@@ -4,6 +4,8 @@ import { MoneyNoteSync, diffRecords, LOCAL_DIRTY_KEY } from './sync.js';
 import { annualCategorySeries, annualReport, budgetAlerts, budgetComparison, dueRecurring, filterTransactions, monthlyExpenseDays } from './features.js';
 import { CATEGORY_ICON_OPTIONS, categoryIconSymbol, categoryIconValue, categoryIconsForType } from './category-icons.js';
 import { APP_VERSION } from './version.js';
+import { DEFAULT_ACCOUNT, accountBalance, annualBudgetStatus, effectiveMonthlyBudget } from './finance.js';
+import { parseCsv, prepareCsvImport } from './csv-import.js';
 
 const STORAGE_KEY = 'moneynote.v1';
 const palette = ['#d16d8b', '#f2ae8f', '#99cc7a', '#dce7d6', '#b5a0ce', '#dfc27c', '#9db9ad', '#c3cfaa'];
@@ -45,15 +47,21 @@ function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (!saved || !Array.isArray(saved.transactions) || !Array.isArray(saved.categories)) throw new Error('No saved data');
+    const accounts = Array.isArray(saved.accounts) ? saved.accounts.filter((item) => item && typeof item.id === 'string' && typeof item.name === 'string' && Number.isSafeInteger(item.openingBalance)) : [];
+    if ((saved.transactions.some((item) => item && (!item.accountId || item.accountId === DEFAULT_ACCOUNT.id)) || saved.transfers?.some((item) => item?.fromAccountId === DEFAULT_ACCOUNT.id || item?.toAccountId === DEFAULT_ACCOUNT.id)) && !accounts.some((item) => item.id === DEFAULT_ACCOUNT.id)) accounts.unshift(structuredClone(DEFAULT_ACCOUNT));
     return {
       transactions: saved.transactions.filter((item) => item && typeof item.id === 'string' && ['income', 'expense'].includes(item.type) && Number.isSafeInteger(item.amount) && item.amount > 0 && validDate(item.date)),
       categories: saved.categories.filter((item) => item && typeof item.id === 'string' && typeof item.name === 'string' && ['income', 'expense'].includes(item.type)),
       budgets: saved.budgets && typeof saved.budgets === 'object' ? saved.budgets : {},
       templates: Array.isArray(saved.templates) ? saved.templates.filter((item) => item && typeof item.id === 'string' && Number.isSafeInteger(item.amount) && item.amount > 0 && ['income', 'expense'].includes(item.type)) : [],
       recurring: Array.isArray(saved.recurring) ? saved.recurring.filter((item) => item && typeof item.id === 'string' && Number.isSafeInteger(item.amount) && item.amount > 0 && Number.isInteger(item.day) && item.day >= 1 && item.day <= 31 && /^\d{4}-(0[1-9]|1[0-2])$/.test(item.startMonth)) : [],
+      accounts: accounts.length ? accounts : [structuredClone(DEFAULT_ACCOUNT)],
+      transfers: Array.isArray(saved.transfers) ? saved.transfers.filter((item) => item && typeof item.id === 'string' && Number.isSafeInteger(item.amount) && item.amount > 0 && validDate(item.date) && typeof item.fromAccountId === 'string' && typeof item.toAccountId === 'string' && item.fromAccountId !== item.toAccountId) : [],
+      goals: Array.isArray(saved.goals) ? saved.goals.filter((item) => item && typeof item.id === 'string' && typeof item.name === 'string' && Number.isSafeInteger(item.targetAmount) && item.targetAmount > 0 && Number.isSafeInteger(item.savedAmount) && item.savedAmount >= 0) : [],
+      annualBudgets: saved.annualBudgets && typeof saved.annualBudgets === 'object' && !Array.isArray(saved.annualBudgets) ? saved.annualBudgets : {},
     };
   } catch {
-    return { transactions: [], categories: structuredClone(defaultCategories), budgets: {}, templates: [], recurring: [] };
+    return { transactions: [], categories: structuredClone(defaultCategories), budgets: {}, templates: [], recurring: [], accounts: [structuredClone(DEFAULT_ACCOUNT)], transfers: [], goals: [], annualBudgets: {} };
   }
 }
 
@@ -64,7 +72,12 @@ let selectedYear = selectedMonth.slice(0, 4);
 let selectedTrendCategory = '';
 let activeView = 'overview';
 let toastTimer;
+let undoTimer;
+let undoDeleteAction;
 let pendingRestore;
+let csvSource;
+let csvPreview = [];
+let csvSelection = new Set();
 let sync;
 let supabaseClient;
 let sessionUser;
@@ -97,6 +110,14 @@ function setSyncStatus(message) {
   $('#sync-dialog-status').textContent = message;
   $('#storage-caption').textContent = message;
   $('#sync-status-button').title = message;
+  renderSyncDetail();
+}
+
+function renderSyncDetail() {
+  const info = sync?.getDiagnostics();
+  if (!info || !sync.active) { $('#sync-detail').textContent = 'Dữ liệu đang lưu trên thiết bị. Khi đăng nhập, app sẽ gửi từng thay đổi lên đám mây.'; return; }
+  const last = info.lastSyncedAt ? new Date(info.lastSyncedAt).toLocaleString('vi-VN') : 'chưa có';
+  $('#sync-detail').textContent = `Chờ gửi: ${info.queued} · Xung đột: ${info.conflicts} · Đồng bộ thành công gần nhất: ${last}${info.lastError ? ` · Lỗi gần nhất: ${info.lastError}` : ''}`;
 }
 
 function updateSyncDialog() {
@@ -108,6 +129,7 @@ function updateSyncDialog() {
   $('#sync-login-form').hidden = !configured || !!sessionUser;
   $('#sync-refresh').hidden = !sessionUser;
   $('#sync-logout').hidden = !sessionUser;
+  renderSyncDetail();
 }
 
 function chooseInitialData(local, remoteRows, { differentAccount } = {}) {
@@ -151,20 +173,28 @@ async function initializeSync() {
   } catch (error) { setSyncStatus(`Không thể khởi tạo đồng bộ: ${error.message}`); }
 }
 
-function toast(message) {
-  const el = $('#toast'); el.textContent = message; el.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+function toast(message, duration = 3200) {
+  const el = $('#toast'); $('#toast-message').textContent = message; $('#undo-delete').hidden = !undoDeleteAction; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
+
+function deletedWithUndo(message, restore) {
+  undoDeleteAction = restore;
+  clearTimeout(undoTimer);
+  saveState(); render(); toast(message, 8000);
+  undoTimer = setTimeout(() => { undoDeleteAction = undefined; $('#undo-delete').hidden = true; }, 8000);
 }
 
 function categoryById(id) { return state.categories.find((item) => item.id === id); }
+function accountById(id) { return state.accounts.find((item) => item.id === (id || DEFAULT_ACCOUNT.id)); }
 function monthlyTransactions(month = selectedMonth) { return state.transactions.filter((item) => item.date.slice(0, 7) === month); }
 function sorted(items) { return [...items].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || '')); }
 function budgetForMonth() {
   const entry = state.budgets[selectedMonth];
-  return entry && typeof entry === 'object' ? entry : { total: 0, categories: {} };
+  return entry && typeof entry === 'object' ? entry : { total: 0, categories: {}, rollover: false };
 }
 function ensureBudget() {
-  if (!state.budgets[selectedMonth] || typeof state.budgets[selectedMonth] !== 'object') state.budgets[selectedMonth] = { total: 0, categories: {} };
+  if (!state.budgets[selectedMonth] || typeof state.budgets[selectedMonth] !== 'object') state.budgets[selectedMonth] = { total: 0, categories: {}, rollover: false };
   if (!state.budgets[selectedMonth].categories || typeof state.budgets[selectedMonth].categories !== 'object') state.budgets[selectedMonth].categories = {};
   return state.budgets[selectedMonth];
 }
@@ -174,12 +204,12 @@ function amountInput(value, allowZero = false) {
 }
 
 function setView(view) {
-  if (!['overview', 'transactions', 'budgets', 'yearly', 'categories'].includes(view)) return;
+  if (!['overview', 'transactions', 'budgets', 'yearly', 'categories', 'wallets'].includes(view)) return;
   activeView = view;
   document.body.classList.toggle('yearly-view', view === 'yearly');
   $$('.view').forEach((el) => el.classList.toggle('active', el.id === view));
   $$('[data-view]').forEach((el) => el.classList.toggle('active', el.dataset.view === view));
-  $('#breadcrumb-current').textContent = { overview: 'Tổng quan', transactions: 'Giao dịch', budgets: 'Ngân sách', yearly: 'Theo năm', categories: 'Danh mục' }[view];
+  $('#breadcrumb-current').textContent = { overview: 'Tổng quan', transactions: 'Giao dịch', budgets: 'Ngân sách', yearly: 'Theo năm', categories: 'Danh mục', wallets: 'Ví & mục tiêu' }[view];
   if (location.hash !== `#${view}`) history.replaceState(null, '', `#${view}`);
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
@@ -209,6 +239,7 @@ function render() {
   renderCategories();
   renderTemplates();
   renderRecurring();
+  renderWallets();
 }
 
 function lineChart(values, labels, color, ariaLabel, markerIndexes = []) {
@@ -242,7 +273,8 @@ function renderDailyInsights() {
 }
 
 function renderYearly() {
-  const years = [...new Set([selectedYear, currentMonth().slice(0, 4), ...state.transactions.map((item) => item.date.slice(0, 4))])].sort((a, b) => b.localeCompare(a));
+  const currentYear = Number(currentMonth().slice(0, 4));
+  const years = [...new Set([selectedYear, String(currentYear - 1), String(currentYear), String(currentYear + 1), ...Object.keys(state.annualBudgets), ...state.transactions.map((item) => item.date.slice(0, 4))])].sort((a, b) => b.localeCompare(a));
   $('#year-input').innerHTML = years.map((year) => `<option value="${year}">${year}</option>`).join('');
   $('#year-input').value = selectedYear;
 
@@ -254,16 +286,20 @@ function renderYearly() {
   $('#year-net-total').textContent = money(report.incomeTotal - report.expenseTotal);
   $('#year-expense-caption').textContent = `${expenseCount} giao dịch chi`;
   $('#year-income-caption').textContent = `${incomeCount} giao dịch thu`;
+  const annualBudget = annualBudgetStatus(state, selectedYear);
+  $('#annual-budget-year').textContent = selectedYear;
+  $('#annual-budget-input').value = annualBudget.limit || '';
+  $('#annual-budget-progress').innerHTML = annualBudget.limit ? progressHtml(annualBudget.spent, annualBudget.limit) : '<div class="budget-empty"><strong>Chưa đặt giới hạn năm</strong>Nhập số tiền dự định chi trong năm để theo dõi.</div>';
 
   const max = Math.max(1, ...report.months.flatMap((month) => [month.income, month.expense]));
-  $('#yearly-chart').innerHTML = report.months.map((month) => `<div class="yearly-chart-col"><div class="yearly-bar-area"><span class="yearly-bar income" style="height:${month.income ? Math.max(3, month.income / max * 100) : 0}%" title="Tháng ${month.number}: thu ${money(month.income)}"></span><span class="yearly-bar expense" style="height:${month.expense ? Math.max(3, month.expense / max * 100) : 0}%" title="Tháng ${month.number}: chi ${money(month.expense)}"></span></div><span>T${month.number}</span></div>`).join('');
+  $('#yearly-chart').innerHTML = report.months.map((month) => `<button class="yearly-chart-col" data-drill-month="${selectedYear}-${String(month.number).padStart(2, '0')}" aria-label="Xem giao dịch tháng ${month.number}/${selectedYear}"><span class="yearly-bar-area"><span class="yearly-bar income" style="height:${month.income ? Math.max(3, month.income / max * 100) : 0}%" title="Tháng ${month.number}: thu ${money(month.income)}"></span><span class="yearly-bar expense" style="height:${month.expense ? Math.max(3, month.expense / max * 100) : 0}%" title="Tháng ${month.number}: chi ${money(month.expense)}"></span></span><span>T${month.number}</span></button>`).join('');
   $('#yearly-chart').setAttribute('aria-label', `Thu và chi theo 12 tháng năm ${selectedYear}. Tổng thu ${money(report.incomeTotal)}, tổng chi ${money(report.expenseTotal)}.`);
 
   $('#yearly-categories').innerHTML = report.categories.length
     ? report.categories.map(({ id, amount }, index) => {
       const category = categoryById(id);
       const percent = Math.round(amount / report.expenseTotal * 100);
-      return `<div class="yearly-category-row"><span class="category-badge">${categoryIconHtml(category?.icon, id)}</span><div class="yearly-category-info"><div><strong>${escapeHtml(category?.name || 'Danh mục đã xóa')}</strong><span>${percent}%</span></div><div class="yearly-category-track"><i style="width:${amount / report.expenseTotal * 100}%;background:${palette[index % palette.length]}"></i></div></div><strong class="yearly-category-amount">${money(amount)}</strong></div>`;
+      return `<button class="yearly-category-row" data-drill-year="${selectedYear}" data-drill-category="${escapeHtml(id)}" aria-label="Xem khoản chi ${escapeHtml(category?.name || 'danh mục đã xóa')} năm ${selectedYear}"><span class="category-badge">${categoryIconHtml(category?.icon, id)}</span><div class="yearly-category-info"><div><strong>${escapeHtml(category?.name || 'Danh mục đã xóa')}</strong><span>${percent}%</span></div><div class="yearly-category-track"><i style="width:${amount / report.expenseTotal * 100}%;background:${palette[index % palette.length]}"></i></div></div><strong class="yearly-category-amount">${money(amount)}</strong></button>`;
     }).join('')
     : '<div class="empty-state"><strong>Chưa có khoản chi trong năm này</strong>Chọn năm khác hoặc ghi khoản chi để xem phân bổ.</div>';
 
@@ -276,9 +312,17 @@ function renderYearlyStacked(report) {
   const series = annualCategorySeries(state, selectedYear);
   const max = Math.max(1, ...report.months.map((month) => month.expense));
   $('#yearly-stacked').innerHTML = report.expenseTotal
-    ? `<div class="stacked-chart" role="img" aria-label="Chi tiêu theo danh mục của 12 tháng năm ${selectedYear}">${series.months.map((month) => {
+    ? `<div class="stacked-chart" role="group" aria-label="Chi tiêu theo danh mục của 12 tháng năm ${selectedYear}">${series.months.map((month) => {
       const total = month.segments.reduce((sum, item) => sum + item.amount, 0);
-      return `<div class="stacked-col"><div class="stacked-bar-area"><div class="stacked-bar" style="height:${total / max * 100}%">${month.segments.map((segment, index) => segment.amount ? `<span style="height:${segment.amount / total * 100}%;background:${palette[index % palette.length]}" title="Tháng ${month.number} · ${escapeHtml(segment.id === null ? 'Danh mục khác' : categoryById(segment.id)?.name || 'Danh mục đã xóa')}: ${money(segment.amount)}"></span>` : '').join('')}</div></div><span>T${month.number}</span></div>`;
+      const segments = month.segments.map((segment, index) => {
+        if (!segment.amount) return '';
+        const name = segment.id === null ? 'Danh mục khác' : categoryById(segment.id)?.name || 'Danh mục đã xóa';
+        const style = `height:${segment.amount / total * 100}%;background:${palette[index % palette.length]}`;
+        const title = `Tháng ${month.number} · ${name}: ${money(segment.amount)}`;
+        return segment.id === null ? `<span style="${style}" title="${escapeHtml(title)}"></span>`
+          : `<button data-drill-month="${selectedYear}-${String(month.number).padStart(2, '0')}" data-drill-category="${escapeHtml(segment.id)}" style="${style}" title="${escapeHtml(title)}" aria-label="Xem giao dịch tháng ${month.number} của ${escapeHtml(name)}"></button>`;
+      }).join('');
+      return `<div class="stacked-col"><div class="stacked-bar-area"><div class="stacked-bar" style="height:${total / max * 100}%">${segments}</div></div><span>T${month.number}</span></div>`;
     }).join('')}</div>`
     : '<div class="empty-state"><strong>Chưa có khoản chi trong năm</strong>Biểu đồ danh mục sẽ xuất hiện khi bạn ghi khoản chi.</div>';
   $('#yearly-stacked-legend').innerHTML = report.expenseTotal ? series.categories.map(({ id }, index) => `<span><i style="background:${palette[index % palette.length]}"></i>${escapeHtml(id === null ? 'Danh mục khác' : categoryById(id)?.name || 'Danh mục đã xóa')}</span>`).join('') : '';
@@ -304,10 +348,10 @@ function renderCashflow() {
     const date = new Date(year, month - 6 + index, 1);
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
     const items = monthlyTransactions(key);
-    return { label: `T${date.getMonth() + 1}`, income: sum(items.filter((item) => item.type === 'income')), expense: sum(items.filter((item) => item.type === 'expense')) };
+    return { key, label: `T${date.getMonth() + 1}`, income: sum(items.filter((item) => item.type === 'income')), expense: sum(items.filter((item) => item.type === 'expense')) };
   });
   const max = Math.max(1, ...months.flatMap((item) => [item.income, item.expense]));
-  $('#cashflow-chart').innerHTML = months.map((item) => `<div class="chart-col"><div class="bar-area"><div class="bar income" style="height:${item.income ? Math.max(4, item.income / max * 100) : 0}%" title="Thu: ${money(item.income)}"></div><div class="bar expense" style="height:${item.expense ? Math.max(4, item.expense / max * 100) : 0}%" title="Chi: ${money(item.expense)}"></div></div><span class="chart-label">${item.label}</span></div>`).join('');
+  $('#cashflow-chart').innerHTML = months.map((item) => `<button class="chart-col" data-drill-month="${item.key}" aria-label="Xem giao dịch ${monthName(item.key)}"><span class="bar-area"><span class="bar income" style="height:${item.income ? Math.max(4, item.income / max * 100) : 0}%" title="Thu: ${money(item.income)}"></span><span class="bar expense" style="height:${item.expense ? Math.max(4, item.expense / max * 100) : 0}%" title="Chi: ${money(item.expense)}"></span></span><span class="chart-label">${item.label}</span></button>`).join('');
   $('#cashflow-chart').setAttribute('aria-label', `Biểu đồ thu chi sáu tháng, cao nhất ${money(max)}`);
 }
 
@@ -317,7 +361,7 @@ function renderCategoryChart(expenseItems) {
   const grouped = Object.entries(expenseItems.reduce((map, item) => { map[item.categoryId] = (map[item.categoryId] || 0) + item.amount; return map; }, {})).sort((a, b) => b[1] - a[1]);
   let position = 0;
   const stops = grouped.map(([, amount], index) => { const start = position; position += amount / total * 100; return `${palette[index % palette.length]} ${start}% ${position}%`; });
-  const legend = grouped.map(([id, amount], index) => `<div class="category-legend-row"><span class="legend-name"><i style="background:${palette[index % palette.length]}"></i>${escapeHtml(categoryById(id)?.name || 'Danh mục đã xóa')}</span><strong>${Math.round(amount / total * 100)}%</strong></div>`).join('');
+  const legend = grouped.map(([id, amount], index) => `<button class="category-legend-row" data-drill-month="${selectedMonth}" data-drill-category="${escapeHtml(id)}" aria-label="Xem khoản chi ${escapeHtml(categoryById(id)?.name || 'danh mục đã xóa')} ${monthName(selectedMonth)}"><span class="legend-name"><i style="background:${palette[index % palette.length]}"></i>${escapeHtml(categoryById(id)?.name || 'Danh mục đã xóa')}</span><strong>${Math.round(amount / total * 100)}%</strong></button>`).join('');
   $('#category-chart').innerHTML = `<div class="donut" style="background:conic-gradient(${stops.join(',')})"><div class="donut-hole"><small>Tổng chi</small><strong>${compactMoney(total)}</strong></div></div><div class="category-legend">${legend}</div>`;
 }
 
@@ -328,11 +372,11 @@ function progressHtml(spent, limit) {
   return `<div class="budget-overview-top"><strong>${money(spent)}</strong><span>/ ${money(limit)}</span></div><div class="progress-track" role="progressbar" aria-valuenow="${spent}" aria-valuemin="0" aria-valuemax="${limit}" aria-label="Đã dùng ngân sách"><div class="progress-fill ${color}" style="width:${Math.min(percent, 100)}%"></div></div><div class="budget-caption"><span>Đã sử dụng ${percent}% ngân sách</span><strong>${spent > limit ? `Vượt ${money(spent - limit)}` : `Còn ${money(limit - spent)}`}</strong></div>`;
 }
 
-function renderOverviewBudget(expense) { $('#overview-budget').innerHTML = progressHtml(expense, Number(budgetForMonth().total) || 0); }
+function renderOverviewBudget(expense) { $('#overview-budget').innerHTML = progressHtml(expense, effectiveMonthlyBudget(state, selectedMonth).limit); }
 
 function transactionHtml(item, actions = false) {
   const category = categoryById(item.categoryId);
-  const detail = [category?.name || 'Danh mục đã xóa', dateName(item.date)].join(' · ');
+  const detail = [category?.name || 'Danh mục đã xóa', accountById(item.accountId)?.name || 'Ví đã xóa', dateName(item.date)].join(' · ');
   const savedAsTemplate = state.templates.some((template) => template.type === item.type && template.amount === item.amount && template.categoryId === item.categoryId && template.note === (item.note || ''));
   const saveButton = savedAsTemplate
     ? `<span class="template-saved" aria-label="Đã lưu làm mẫu nhanh" title="Đã lưu làm mẫu nhanh">${iconSvg('star')}<span>Mẫu</span></span>`
@@ -350,6 +394,9 @@ function renderTransactionFilters() {
   const previous = select.value;
   select.innerHTML = '<option value="all">Tất cả danh mục</option>' + state.categories.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
   select.value = state.categories.some((item) => item.id === previous) ? previous : 'all';
+  const accountSelect = $('#account-filter'), accountPrevious = accountSelect.value;
+  accountSelect.innerHTML = '<option value="all">Tất cả ví</option>' + state.accounts.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  accountSelect.value = state.accounts.some((item) => item.id === accountPrevious) ? accountPrevious : 'all';
 }
 
 function filteredTransactions() {
@@ -357,6 +404,7 @@ function filteredTransactions() {
     query: $('#search-input').value,
     type: $('#type-filter').value,
     category: $('#category-filter').value,
+    account: $('#account-filter').value,
     period: $('#period-filter').value,
     month: selectedMonth,
     from: $('#date-from').value,
@@ -373,8 +421,11 @@ function renderTransactions() {
 
 function renderBudgets(expense) {
   const budget = budgetForMonth();
+  const effective = effectiveMonthlyBudget(state, selectedMonth);
   $('#total-budget-input').value = budget.total || '';
-  $('#total-budget-progress').innerHTML = budget.total ? `<div class="budget-stats"><div>Đã chi<strong>${money(expense)}</strong></div><div>${expense > budget.total ? 'Đã vượt' : 'Còn lại'}<strong>${money(Math.abs(budget.total - expense))}</strong></div></div><div class="progress-track"><div class="progress-fill ${expense >= budget.total ? 'danger' : expense >= budget.total * .8 ? 'warning' : ''}" style="width:${Math.min(expense / budget.total * 100, 100)}%"></div></div>` : '';
+  $('#budget-rollover').checked = !!budget.rollover;
+  $('#total-budget-progress').innerHTML = effective.limit ? `<div class="budget-stats"><div>Đã chi<strong>${money(expense)}</strong></div><div>${expense > effective.limit ? 'Đã vượt' : 'Còn lại'}<strong>${money(Math.abs(effective.limit - expense))}</strong></div></div><div class="progress-track"><div class="progress-fill ${expense >= effective.limit ? 'danger' : expense >= effective.limit * .8 ? 'warning' : ''}" style="width:${Math.min(expense / effective.limit * 100, 100)}%"></div></div>` : '';
+  $('#budget-rollover-caption').textContent = budget.rollover ? `Giới hạn gốc ${money(effective.base)} + chuyển dư ${money(effective.carry)} = ${money(effective.limit)}.` : 'Chuyển dư chỉ áp dụng cho tổng ngân sách tháng; cần đặt ngân sách ở tháng trước.';
   const expenses = state.categories.filter((item) => item.type === 'expense');
   $('#category-budgets').innerHTML = expenses.map((category) => {
     const spent = sum(monthlyTransactions().filter((item) => item.type === 'expense' && item.categoryId === category.id));
@@ -398,6 +449,22 @@ function renderCategories() {
       return `<div class="category-row"><span class="category-badge ${type === 'income' ? 'income' : ''}">${categoryIconHtml(item.icon, item.id)}</span><strong>${escapeHtml(item.name)}</strong><small>${count} giao dịch</small><button class="icon-action" data-edit-category="${escapeHtml(item.id)}" aria-label="Sửa ${escapeHtml(item.name)}">${iconSvg('edit')}</button><button class="icon-action" data-delete-category="${escapeHtml(item.id)}" aria-label="Xóa ${escapeHtml(item.name)}">${iconSvg('close')}</button></div>`;
     }).join('') : '<div class="empty-state">Chưa có danh mục.</div>';
   }
+}
+
+function renderWallets() {
+  const asOf = todayLocal();
+  const total = state.accounts.reduce((amount, account) => amount + accountBalance(state, account.id, asOf), 0);
+  $('#wallet-total-balance').textContent = money(total);
+  $('#wallet-total-balance').classList.toggle('negative', total < 0);
+  $('#account-list').innerHTML = state.accounts.map((account) => {
+    const balance = accountBalance(state, account.id, asOf);
+    return `<div class="wallet-row"><span class="wallet-row-icon">${iconSvg('wallet')}</span><div><strong>${escapeHtml(account.name)}</strong><small>Số dư ban đầu ${money(account.openingBalance)}</small></div><strong class="wallet-balance ${balance < 0 ? 'negative' : ''}">${money(balance)}</strong><button class="icon-action" data-edit-account="${escapeHtml(account.id)}" aria-label="Sửa ví ${escapeHtml(account.name)}">${iconSvg('edit')}</button>${account.id !== DEFAULT_ACCOUNT.id ? `<button class="icon-action" data-delete-account="${escapeHtml(account.id)}" aria-label="Xóa ví ${escapeHtml(account.name)}">${iconSvg('close')}</button>` : ''}</div>`;
+  }).join('');
+  $('#transfer-list').innerHTML = state.transfers.length ? sorted(state.transfers).map((item) => `<div class="wallet-row transfer-row"><span class="wallet-row-icon">${iconSvg('transactions')}</span><div><strong>${escapeHtml(accountById(item.fromAccountId)?.name || 'Ví đã xóa')} → ${escapeHtml(accountById(item.toAccountId)?.name || 'Ví đã xóa')}</strong><small>${dateName(item.date)}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</small></div><strong class="wallet-balance">${money(item.amount)}</strong><button class="icon-action" data-edit-transfer="${escapeHtml(item.id)}" aria-label="Sửa chuyển tiền">${iconSvg('edit')}</button><button class="icon-action" data-delete-transfer="${escapeHtml(item.id)}" aria-label="Xóa chuyển tiền">${iconSvg('close')}</button></div>`).join('') : '<div class="empty-state"><strong>Chưa chuyển tiền</strong>Chuyển giữa ví không làm thay đổi tổng thu hoặc chi.</div>';
+  $('#goal-list').innerHTML = state.goals.length ? state.goals.map((goal) => {
+    const percent = Math.round(goal.savedAmount / goal.targetAmount * 100);
+    return `<div class="goal-row"><div class="goal-heading"><strong>${escapeHtml(goal.name)}</strong><span>${percent}%${goal.deadline ? ` · Hạn ${dateName(goal.deadline)}` : ''}</span></div><div class="goal-progress"><i style="width:${Math.min(percent, 100)}%"></i></div><div class="goal-foot"><span>Đã dành ${money(goal.savedAmount)} / ${money(goal.targetAmount)}</span><span>${goal.savedAmount >= goal.targetAmount ? 'Đã đạt mục tiêu' : `Còn ${money(goal.targetAmount - goal.savedAmount)}`}</span></div><div class="goal-actions"><button class="text-link" data-edit-goal="${escapeHtml(goal.id)}">Cập nhật</button><button class="text-link" data-delete-goal="${escapeHtml(goal.id)}">Xóa</button></div></div>`;
+  }).join('') : '<div class="empty-state"><strong>Chưa có mục tiêu</strong>Đặt mục tiêu đầu tiên và cập nhật số tiền đã dành riêng.</div>';
 }
 
 function renderBudgetAlerts() {
@@ -445,9 +512,53 @@ function openTransaction(id = '', preset = null) {
   $('#transaction-dialog-title').textContent = item ? 'Sửa giao dịch' : preset ? 'Xác nhận giao dịch' : 'Thêm giao dịch';
   setTransactionType(item?.type || preset?.type || 'expense', item?.categoryId || preset?.categoryId);
   const source = item || preset;
+  $('#transaction-account').innerHTML = state.accounts.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.name)}</option>`).join('');
+  $('#transaction-account').value = source?.accountId || DEFAULT_ACCOUNT.id;
   if (source) { $('#transaction-amount').value = formatAmountInput(source.amount); $('#transaction-date').value = source.date || todayLocal(); $('#transaction-note').value = source.note || ''; }
   $('#transaction-dialog').showModal();
   $('#transaction-amount').focus();
+}
+
+function openAccount(id = '') {
+  const account = id ? accountById(id) : null;
+  $('#account-form').reset();
+  $('#account-id').value = account?.id || '';
+  $('#account-dialog-title').textContent = account ? 'Sửa ví' : 'Thêm ví';
+  $('#account-name').value = account?.name || '';
+  $('#account-opening').value = account?.openingBalance ?? 0;
+  $('#account-dialog').showModal();
+  $('#account-name').focus();
+}
+
+function openTransfer(id = '') {
+  if (state.accounts.length < 2) { toast('Cần ít nhất hai ví để chuyển tiền'); return; }
+  const item = state.transfers.find((entry) => entry.id === id);
+  $('#transfer-form').reset();
+  $('#transfer-id').value = item?.id || '';
+  $('#transfer-dialog-title').textContent = item ? 'Sửa chuyển tiền' : 'Chuyển giữa các ví';
+  const options = state.accounts.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.name)}</option>`).join('');
+  $('#transfer-from').innerHTML = options;
+  $('#transfer-to').innerHTML = options;
+  $('#transfer-from').value = item?.fromAccountId || state.accounts[0].id;
+  $('#transfer-to').value = item?.toAccountId || state.accounts[1].id;
+  $('#transfer-amount').value = item ? formatAmountInput(item.amount) : '';
+  $('#transfer-date').value = item?.date || todayLocal();
+  $('#transfer-note').value = item?.note || '';
+  $('#transfer-dialog').showModal();
+  $('#transfer-amount').focus();
+}
+
+function openGoal(id = '') {
+  const goal = state.goals.find((item) => item.id === id);
+  $('#goal-form').reset();
+  $('#goal-id').value = goal?.id || '';
+  $('#goal-dialog-title').textContent = goal ? 'Cập nhật mục tiêu' : 'Thêm mục tiêu';
+  $('#goal-name').value = goal?.name || '';
+  $('#goal-target').value = goal?.targetAmount || '';
+  $('#goal-saved').value = goal?.savedAmount ?? 0;
+  $('#goal-deadline').value = goal?.deadline || '';
+  $('#goal-dialog').showModal();
+  $('#goal-name').focus();
 }
 
 function renderCategoryIconPicker() {
@@ -530,11 +641,13 @@ function conflictDescription(row) {
   if (!row) return 'Mục chưa có trên đám mây';
   if (row.deleted) return 'Mục đã bị xóa';
   const item = row.payload || {};
-  if (row.kind === 'budget_total') return `Ngân sách ${monthName(row.record_id)}\nGiới hạn: ${money(item.amount)}`;
+  if (row.kind === 'budget_total') return `Ngân sách ${row.record_id.startsWith('year:') ? `năm ${row.record_id.slice(5)}` : monthName(row.record_id)}\nGiới hạn: ${money(item.amount)}`;
   if (row.kind === 'category_budget') return `Ngân sách danh mục: ${categoryById(item.categoryId)?.name || item.categoryId}\n${monthName(item.month)} · ${money(item.amount)}`;
   const lines = [item.name || (row.kind === 'transaction' ? 'Giao dịch' : row.record_id)];
-  if (item.type) lines.push(item.type === 'income' ? 'Khoản thu' : 'Khoản chi');
+  if (item.type) lines.push(({ income: 'Khoản thu', expense: 'Khoản chi', transfer: 'Chuyển tiền', account: 'Ví', goal: 'Mục tiêu' })[item.type] || item.type);
   if (Number.isSafeInteger(item.amount)) lines.push(`Số tiền: ${money(item.amount)}`);
+  if (Number.isSafeInteger(item.openingBalance)) lines.push(`Số dư ban đầu: ${money(item.openingBalance)}`);
+  if (Number.isSafeInteger(item.targetAmount)) lines.push(`Mục tiêu: ${money(item.targetAmount)} · Đã dành ${money(item.savedAmount)}`);
   if (item.date) lines.push(`Ngày: ${dateName(item.date)}`);
   if (item.categoryId) lines.push(`Danh mục: ${categoryById(item.categoryId)?.name || item.categoryId}`);
   if (item.day) lines.push(`Ngày hằng tháng: ${item.day}`);
@@ -567,19 +680,81 @@ function exportCsv(items, filename) {
     if (/^[\s]*[=+\-@]/.test(text)) text = `'${text}`;
     return `"${text.replaceAll('"', '""')}"`;
   };
-  const rows = [['Ngày', 'Loại', 'Danh mục', 'Số tiền (VND)', 'Ghi chú'], ...sorted(items).map((item) => [item.date, item.type === 'income' ? 'Thu' : 'Chi', categoryById(item.categoryId)?.name || '', item.amount, item.note || ''])];
+  const rows = [['Ngày', 'Loại', 'Danh mục', 'Số tiền (VND)', 'Ghi chú', 'Ví'], ...sorted(items).map((item) => [item.date, item.type === 'income' ? 'Thu' : 'Chi', categoryById(item.categoryId)?.name || '', item.amount, item.note || '', accountById(item.accountId)?.name || ''])];
   const csv = '\ufeff' + rows.map((row) => row.map(safeCell).join(',')).join('\r\n');
   downloadFile(csv, filename, 'text/csv;charset=utf-8');
   toast(`Đã xuất ${items.length} giao dịch`);
 }
 
+function importMapping() {
+  return {
+    date: $('#csv-date').value, amount: $('#csv-amount').value, expense: $('#csv-expense').value, income: $('#csv-income').value,
+    type: $('#csv-type').value, category: $('#csv-category').value, note: $('#csv-note').value,
+    accountId: $('#csv-account').value, defaultType: $('#csv-default-type').value,
+    expenseCategoryId: $('#csv-expense-category').value, incomeCategoryId: $('#csv-income-category').value,
+  };
+}
+
+function renderCsvPreview(resetSelection = false) {
+  if (!csvSource) return;
+  csvPreview = prepareCsvImport(csvSource.rows, importMapping(), state);
+  if (resetSelection) csvSelection = new Set(csvPreview.filter((row) => row.item && !row.duplicate).map((row) => row.index));
+  const errors = csvPreview.filter((row) => row.error).length, duplicates = csvPreview.filter((row) => row.duplicate).length;
+  $('#csv-preview-summary').textContent = `${csvPreview.length} dòng · ${errors} lỗi · ${duplicates} trùng · ${csvSelection.size} được chọn. Dòng trùng được bỏ chọn mặc định; bạn có thể chọn lại nếu đó là giao dịch riêng.`;
+  $('#csv-preview').innerHTML = csvPreview.map((row) => `<label class="csv-preview-row ${row.error ? 'invalid' : row.duplicate ? 'duplicate' : ''}"><input type="checkbox" data-csv-row="${row.index}" ${csvSelection.has(row.index) ? 'checked' : ''} ${row.error ? 'disabled' : ''}/><span>${row.item ? `${dateName(row.item.date)} · ${row.item.type === 'expense' ? 'Chi' : 'Thu'} · ${escapeHtml(categoryById(row.item.categoryId)?.name || '')}${row.item.note ? ` · ${escapeHtml(row.item.note)}` : ''}` : `Dòng ${row.index + 2}: ${escapeHtml(row.error)}`}</span><strong>${row.item ? money(row.item.amount) : ''}</strong>${row.duplicate ? '<em>Trùng</em>' : ''}</label>`).join('');
+  $('#csv-confirm').disabled = !csvSelection.size;
+}
+
+function openChartTransactions({ month = '', year = '', category = '' }) {
+  if (month) { selectedMonth = month; selectedYear = month.slice(0, 4); render(); }
+  if (year) selectedYear = year;
+  $('#search-input').value = '';
+  $('#type-filter').value = category ? 'expense' : 'all';
+  $('#account-filter').value = 'all';
+  $('#category-filter').value = category || 'all';
+  if (month) {
+    $('#period-filter').value = 'month';
+    $('#date-range-fields').hidden = true;
+  } else {
+    $('#period-filter').value = 'range';
+    $('#date-range-fields').hidden = false;
+    $('#date-from').value = `${year}-01-01`;
+    $('#date-to').value = `${year}-12-31`;
+  }
+  renderTransactions(); setView('transactions');
+}
+
+function openCsvPreview(file, text) {
+  csvSource = parseCsv(text);
+  $('#csv-filename').textContent = `${file.name} · ${csvSource.rows.length} dòng. Chọn cột tương ứng rồi kiểm tra từng giao dịch trước khi nhập.`;
+  const options = '<option value="">— Không dùng —</option>' + csvSource.headers.map((header, index) => `<option value="${index}">${escapeHtml(header || `Cột ${index + 1}`)}</option>`).join('');
+  for (const id of ['date', 'amount', 'expense', 'income', 'type', 'category', 'note']) $(`#csv-${id}`).innerHTML = options;
+  const guess = (...patterns) => csvSource.headers.findIndex((header) => patterns.some((pattern) => pattern.test(header.trim().toLocaleLowerCase('vi'))));
+  const setGuess = (id, index) => { if (index >= 0) $(`#csv-${id}`).value = String(index); };
+  setGuess('date', guess(/^ngày/, /^date/, /transaction date/));
+  setGuess('expense', guess(/^(chi|debit|withdrawal|money out)/, /tiền ra/));
+  setGuess('income', guess(/^(thu|credit|deposit|money in)/, /tiền vào/));
+  if ($('#csv-expense').value === '' && $('#csv-income').value === '') setGuess('amount', guess(/số tiền/, /amount/, /giá trị/));
+  setGuess('type', guess(/^loại/, /^type/, /direction/));
+  setGuess('category', guess(/danh mục/, /category/));
+  setGuess('note', guess(/ghi chú/, /nội dung/, /mô tả/, /description/, /note/, /memo/));
+  $('#csv-account').innerHTML = state.accounts.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.name)}</option>`).join('');
+  for (const type of ['expense', 'income']) $(`#csv-${type}-category`).innerHTML = state.categories.filter((item) => item.type === type).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  $('#csv-default-type').value = 'expense';
+  renderCsvPreview(true);
+  $('#import-csv-dialog').showModal();
+}
+
 document.addEventListener('click', (event) => {
+  const drill = event.target.closest('[data-drill-month],[data-drill-year]');
+  if (drill) { openChartTransactions({ month: drill.dataset.drillMonth, year: drill.dataset.drillYear, category: drill.dataset.drillCategory }); return; }
   const target = event.target.closest('button'); if (!target) return;
   if (target.dataset.view) setView(target.dataset.view);
   if (target.dataset.heatDate) {
     $('#search-input').value = '';
     $('#type-filter').value = 'all';
     $('#category-filter').value = 'all';
+    $('#account-filter').value = 'all';
     $('#period-filter').value = 'range';
     $('#date-range-fields').hidden = false;
     $('#date-from').value = target.dataset.heatDate;
@@ -602,13 +777,13 @@ document.addEventListener('click', (event) => {
   }
   if (target.dataset.deleteTemplate) {
     const item = state.templates.find((entry) => entry.id === target.dataset.deleteTemplate);
-    if (item && confirm(`Xóa mẫu "${item.name}"?`)) { state.templates = state.templates.filter((entry) => entry.id !== item.id); saveState(); render(); toast('Đã xóa mẫu'); }
+    if (item && confirm(`Xóa mẫu "${item.name}"?`)) { const deleted = structuredClone(item); state.templates = state.templates.filter((entry) => entry.id !== item.id); deletedWithUndo('Đã xóa mẫu', () => { if (!state.templates.some((entry) => entry.id === deleted.id)) state.templates.push(deleted); }); }
   }
   if (target.id === 'add-recurring') openRecurring();
   if (target.dataset.editRecurring) openRecurring(target.dataset.editRecurring);
   if (target.dataset.deleteRecurring) {
     const rule = state.recurring.find((entry) => entry.id === target.dataset.deleteRecurring);
-    if (rule && confirm(`Xóa khoản định kỳ "${rule.name}"? Các giao dịch đã xác nhận vẫn được giữ.`)) { state.recurring = state.recurring.filter((entry) => entry.id !== rule.id); saveState(); render(); toast('Đã xóa khoản định kỳ'); }
+    if (rule && confirm(`Xóa khoản định kỳ "${rule.name}"? Các giao dịch đã xác nhận vẫn được giữ.`)) { const deleted = structuredClone(rule); state.recurring = state.recurring.filter((entry) => entry.id !== rule.id); deletedWithUndo('Đã xóa khoản định kỳ', () => { if (!state.recurring.some((entry) => entry.id === deleted.id)) state.recurring.push(deleted); }); }
   }
   if (target.dataset.confirmRecurring) {
     const item = dueRecurring(state, selectedMonth, todayLocal()).find(({ rule }) => rule.id === target.dataset.confirmRecurring);
@@ -624,7 +799,30 @@ document.addEventListener('click', (event) => {
   }
   if (target.dataset.deleteTransaction) {
     const item = state.transactions.find((entry) => entry.id === target.dataset.deleteTransaction);
-    if (item && confirm(`Xóa giao dịch ${money(item.amount)}?`)) { state.transactions = state.transactions.filter((entry) => entry.id !== item.id); saveState(); render(); toast('Đã xóa giao dịch'); }
+    if (item && confirm(`Xóa giao dịch ${money(item.amount)}?`)) {
+      const deleted = structuredClone(item);
+      state.transactions = state.transactions.filter((entry) => entry.id !== item.id);
+      deletedWithUndo('Đã xóa giao dịch', () => { if (!state.transactions.some((entry) => entry.id === deleted.id)) state.transactions.push(deleted); });
+    }
+  }
+  if (target.id === 'add-account') openAccount();
+  if (target.dataset.editAccount) openAccount(target.dataset.editAccount);
+  if (target.dataset.deleteAccount) {
+    const id = target.dataset.deleteAccount, account = accountById(id);
+    if (state.transactions.some((item) => (item.accountId || DEFAULT_ACCOUNT.id) === id) || state.transfers.some((item) => item.fromAccountId === id || item.toAccountId === id)) { toast('Ví đang có giao dịch hoặc chuyển tiền, không thể xóa'); return; }
+    if (account && id !== DEFAULT_ACCOUNT.id && confirm(`Xóa ví "${account.name}"?`)) { const deleted = structuredClone(account); state.accounts = state.accounts.filter((item) => item.id !== id); deletedWithUndo('Đã xóa ví', () => { if (!state.accounts.some((item) => item.id === deleted.id)) state.accounts.push(deleted); }); }
+  }
+  if (target.id === 'add-transfer') openTransfer();
+  if (target.dataset.editTransfer) openTransfer(target.dataset.editTransfer);
+  if (target.dataset.deleteTransfer) {
+    const item = state.transfers.find((entry) => entry.id === target.dataset.deleteTransfer);
+    if (item && confirm(`Xóa chuyển tiền ${money(item.amount)}?`)) { const deleted = structuredClone(item); state.transfers = state.transfers.filter((entry) => entry.id !== item.id); deletedWithUndo('Đã xóa chuyển tiền', () => { if (!state.transfers.some((entry) => entry.id === deleted.id)) state.transfers.push(deleted); }); }
+  }
+  if (target.id === 'add-goal') openGoal();
+  if (target.dataset.editGoal) openGoal(target.dataset.editGoal);
+  if (target.dataset.deleteGoal) {
+    const goal = state.goals.find((item) => item.id === target.dataset.deleteGoal);
+    if (goal && confirm(`Xóa mục tiêu "${goal.name}"?`)) { const deleted = structuredClone(goal); state.goals = state.goals.filter((item) => item.id !== goal.id); deletedWithUndo('Đã xóa mục tiêu', () => { if (!state.goals.some((item) => item.id === deleted.id)) state.goals.push(deleted); }); }
   }
   if (target.id === 'add-category') openCategory();
   if (target.dataset.editCategory) openCategory(target.dataset.editCategory);
@@ -640,9 +838,14 @@ document.addEventListener('click', (event) => {
     const id = target.dataset.deleteCategory, category = categoryById(id);
     if ([...state.transactions, ...state.templates, ...state.recurring].some((item) => item.categoryId === id)) { toast('Danh mục đang được dùng, không thể xóa'); return; }
     if (category && confirm(`Xóa danh mục "${category.name}"?`)) {
+      const deleted = structuredClone(category);
+      const limits = Object.fromEntries(Object.entries(state.budgets).filter(([, budget]) => budget.categories && Object.hasOwn(budget.categories, id)).map(([month, budget]) => [month, budget.categories[id]]));
       state.categories = state.categories.filter((item) => item.id !== id);
       Object.values(state.budgets).forEach((budget) => { if (budget.categories) delete budget.categories[id]; });
-      saveState(); render(); toast('Đã xóa danh mục');
+      deletedWithUndo('Đã xóa danh mục', () => {
+        if (!state.categories.some((item) => item.id === id)) state.categories.push(deleted);
+        for (const [month, limit] of Object.entries(limits)) if (state.budgets[month]?.categories) state.budgets[month].categories[id] = limit;
+      });
     }
   }
   if (target.dataset.saveBudget) {
@@ -657,6 +860,13 @@ document.addEventListener('click', (event) => {
   if (target.hasAttribute('data-sync-open')) { if (sync?.getConflicts().length) { deferredConflicts.clear(); showConflicts(sync.getConflicts()); } else { updateSyncDialog(); $('#sync-dialog').showModal(); } }
 });
 
+$('#undo-delete').addEventListener('click', () => {
+  if (!undoDeleteAction) return;
+  const restore = undoDeleteAction;
+  undoDeleteAction = undefined; clearTimeout(undoTimer); $('#undo-delete').hidden = true;
+  restore(); saveState(); render(); toast('Đã khôi phục mục vừa xóa');
+});
+
 $('#backup-file').addEventListener('change', async (event) => {
   const file = event.target.files?.[0];
   event.target.value = '';
@@ -664,9 +874,9 @@ $('#backup-file').addEventListener('change', async (event) => {
   if (file.size > 10 * 1024 * 1024) { toast('Tệp sao lưu quá lớn (tối đa 10 MB)'); return; }
   try {
     pendingRestore = parseBackup(await file.text());
-    const { transactions, categories, budgets, templates, recurring } = pendingRestore.data;
+    const { transactions, categories, budgets, templates, recurring, accounts, transfers, goals } = pendingRestore.data;
     const exportedAt = new Date(pendingRestore.exportedAt).toLocaleString('vi-VN');
-    $('#restore-summary').textContent = `Bản sao lưu ngày ${exportedAt}: ${transactions.length} giao dịch, ${categories.length} danh mục, ${Object.keys(budgets).length} tháng ngân sách, ${templates.length} mẫu nhanh và ${recurring.length} khoản định kỳ.`;
+    $('#restore-summary').textContent = `Bản sao lưu ngày ${exportedAt}: ${transactions.length} giao dịch, ${categories.length} danh mục, ${Object.keys(budgets).length} tháng ngân sách, ${templates.length} mẫu nhanh, ${recurring.length} khoản định kỳ, ${accounts.length} ví, ${transfers.length} chuyển tiền và ${goals.length} mục tiêu.`;
     $('#restore-dialog .restore-warning').textContent = sync?.active
       ? 'Bản sao lưu sẽ thay thế dữ liệu trên thiết bị này và các mục thay đổi sẽ được đồng bộ lên đám mây. Hãy sao lưu dữ liệu hiện tại trước khi tiếp tục.'
       : 'Dữ liệu trên thiết bị này sẽ được thay thế. Hãy sao lưu dữ liệu hiện tại trước khi tiếp tục.';
@@ -689,6 +899,7 @@ $('#confirm-restore').addEventListener('click', () => {
   $('#search-input').value = '';
   $('#type-filter').value = 'all';
   $('#category-filter').value = 'all';
+  $('#account-filter').value = 'all';
   $('#period-filter').value = 'all';
   $('#date-range-fields').hidden = true;
   $('#date-from').value = '';
@@ -734,11 +945,11 @@ $('#restore-dialog').addEventListener('close', () => { pendingRestore = undefine
 $('#transaction-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const amount = amountInput(amountDigits($('#transaction-amount').value));
-  const type = $('#transaction-type').value, categoryId = $('#transaction-category').value, date = $('#transaction-date').value;
-  if (amount === null || !validDate(date) || categoryById(categoryId)?.type !== type) { toast('Kiểm tra lại số tiền, ngày và danh mục'); return; }
+  const type = $('#transaction-type').value, categoryId = $('#transaction-category').value, date = $('#transaction-date').value, accountId = $('#transaction-account').value;
+  if (amount === null || !validDate(date) || categoryById(categoryId)?.type !== type || !accountById(accountId)) { toast('Kiểm tra lại số tiền, ngày, danh mục và ví'); return; }
   const id = $('#transaction-id').value;
   const existing = state.transactions.find((item) => item.id === id);
-  const next = { id: existing?.id || id || uid(), type, amount, categoryId, date, note: $('#transaction-note').value.trim(), createdAt: existing?.createdAt || new Date().toISOString() };
+  const next = { id: existing?.id || id || uid(), type, amount, categoryId, accountId, date, note: $('#transaction-note').value.trim(), createdAt: existing?.createdAt || new Date().toISOString() };
   if (existing) Object.assign(existing, next); else state.transactions.push(next);
   const wantedTemplate = $('#transaction-save-template').checked;
   const templateAdded = wantedTemplate && addTemplateFromTransaction(next);
@@ -762,7 +973,7 @@ function onAmountInput(event) {
   }
   input.setSelectionRange(caret, caret);
 }
-for (const selector of ['#transaction-amount', '#recurring-amount']) $(selector).addEventListener('input', onAmountInput);
+for (const selector of ['#transaction-amount', '#recurring-amount', '#transfer-amount']) $(selector).addEventListener('input', onAmountInput);
 
 $('#recurring-type').addEventListener('change', (event) => populateRecurringCategories(event.target.value));
 $('#recurring-form').addEventListener('submit', (event) => {
@@ -816,7 +1027,46 @@ $('#total-budget-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const amount = amountInput($('#total-budget-input').value || '0', true);
   if (amount === null) { toast('Ngân sách phải là số nguyên không âm'); return; }
-  ensureBudget().total = amount; saveState(); render(); toast('Đã lưu ngân sách tháng');
+  const budget = ensureBudget(); budget.total = amount; budget.rollover = $('#budget-rollover').checked; saveState(); render(); toast('Đã lưu ngân sách tháng');
+});
+
+$('#annual-budget-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const amount = amountInput($('#annual-budget-input').value || '0', true);
+  if (amount === null) { toast('Giới hạn năm phải là số nguyên không âm'); return; }
+  state.annualBudgets[selectedYear] = amount;
+  saveState(); render(); toast('Đã lưu ngân sách năm');
+});
+
+$('#account-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const name = $('#account-name').value.trim(), openingBalance = Number($('#account-opening').value);
+  if (!name || !Number.isSafeInteger(openingBalance) || Math.abs(openingBalance) > 999999999999) { toast('Kiểm tra tên và số dư ban đầu'); return; }
+  const existing = state.accounts.find((item) => item.id === $('#account-id').value);
+  if (state.accounts.some((item) => item.id !== existing?.id && item.name.toLocaleLowerCase('vi') === name.toLocaleLowerCase('vi'))) { toast('Tên ví đã tồn tại'); return; }
+  if (existing) Object.assign(existing, { name, openingBalance }); else state.accounts.push({ id: uid(), name, openingBalance });
+  $('#account-dialog').close(); saveState(); render(); toast(existing ? 'Đã cập nhật ví' : 'Đã thêm ví');
+});
+
+$('#transfer-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const fromAccountId = $('#transfer-from').value, toAccountId = $('#transfer-to').value;
+  const amount = amountInput(amountDigits($('#transfer-amount').value)), date = $('#transfer-date').value;
+  if (amount === null || !validDate(date) || fromAccountId === toAccountId || !accountById(fromAccountId) || !accountById(toAccountId)) { toast('Kiểm tra hai ví, ngày và số tiền'); return; }
+  const existing = state.transfers.find((item) => item.id === $('#transfer-id').value);
+  const next = { id: existing?.id || uid(), fromAccountId, toAccountId, amount, date, note: $('#transfer-note').value.trim() };
+  if (existing) Object.assign(existing, next); else state.transfers.push(next);
+  $('#transfer-dialog').close(); saveState(); render(); toast(existing ? 'Đã sửa chuyển tiền' : 'Đã chuyển tiền giữa ví');
+});
+
+$('#goal-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const name = $('#goal-name').value.trim(), targetAmount = amountInput($('#goal-target').value), savedAmount = amountInput($('#goal-saved').value || '0', true), deadline = $('#goal-deadline').value;
+  if (!name || targetAmount === null || savedAmount === null || (deadline && !validDate(deadline))) { toast('Kiểm tra mục tiêu và số tiền'); return; }
+  const existing = state.goals.find((item) => item.id === $('#goal-id').value);
+  const next = { id: existing?.id || uid(), name, targetAmount, savedAmount, deadline };
+  if (existing) Object.assign(existing, next); else state.goals.push(next);
+  $('#goal-dialog').close(); saveState(); render(); toast(existing ? 'Đã cập nhật mục tiêu' : 'Đã thêm mục tiêu');
 });
 
 $('#month-input').addEventListener('change', (event) => {
@@ -825,12 +1075,40 @@ $('#month-input').addEventListener('change', (event) => {
 });
 $('#year-input').addEventListener('change', (event) => { selectedYear = event.target.value; renderYearly(); });
 $('#trend-category').addEventListener('change', (event) => { selectedTrendCategory = event.target.value; renderCategoryTrend(annualReport(state, selectedYear)); });
-for (const selector of ['#search-input', '#type-filter', '#category-filter']) $(selector).addEventListener(selector === '#search-input' ? 'input' : 'change', renderTransactions);
+for (const selector of ['#search-input', '#type-filter', '#category-filter', '#account-filter']) $(selector).addEventListener(selector === '#search-input' ? 'input' : 'change', renderTransactions);
 $('#period-filter').addEventListener('change', (event) => { $('#date-range-fields').hidden = event.target.value !== 'range'; renderTransactions(); });
 for (const selector of ['#date-from', '#date-to']) $(selector).addEventListener('change', renderTransactions);
 $('#sidebar-export').addEventListener('click', () => exportCsv(state.transactions, `moneynote-tat-ca-${todayLocal()}.csv`));
 $('#export-all').addEventListener('click', () => exportCsv(state.transactions, `moneynote-tat-ca-${todayLocal()}.csv`));
 $('#export-filtered').addEventListener('click', () => exportCsv(filteredTransactions(), `moneynote-${selectedMonth}.csv`));
+$('#import-csv-open').addEventListener('click', () => $('#import-csv-file').click());
+$('#import-csv-file').addEventListener('change', async (event) => {
+  const file = event.target.files?.[0]; event.target.value = '';
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { toast('CSV tối đa 5 MB mỗi lần'); return; }
+  try { openCsvPreview(file, await file.text()); }
+  catch (error) { csvSource = undefined; toast(error.message || 'Không thể đọc CSV'); }
+});
+for (const id of ['date', 'amount', 'expense', 'income', 'type', 'category', 'note', 'account', 'default-type', 'expense-category', 'income-category']) $(`#csv-${id}`).addEventListener('change', () => renderCsvPreview(true));
+$('#csv-preview').addEventListener('change', (event) => {
+  const index = Number(event.target.dataset.csvRow);
+  if (!Number.isInteger(index)) return;
+  if (event.target.checked) csvSelection.add(index); else csvSelection.delete(index);
+  $('#csv-confirm').disabled = !csvSelection.size;
+  $('#csv-preview-summary').textContent = $('#csv-preview-summary').textContent.replace(/\d+ được chọn/, `${csvSelection.size} được chọn`);
+});
+$('#csv-confirm').addEventListener('click', () => {
+  const selected = csvPreview.filter((row) => row.item && csvSelection.has(row.index));
+  if (!selected.length) { toast('Chưa chọn giao dịch hợp lệ'); return; }
+  const previous = structuredClone(state);
+  const createdAt = new Date().toISOString();
+  state.transactions.push(...selected.map(({ item }) => ({ id: uid(), ...item, createdAt })));
+  if (!saveState()) { state = previous; return; }
+  const latest = selected.reduce((date, row) => row.item.date > date ? row.item.date : date, '');
+  selectedMonth = latest.slice(0, 7); selectedYear = latest.slice(0, 4);
+  $('#import-csv-dialog').close(); csvSource = undefined; csvPreview = []; csvSelection.clear();
+  render(); setView('transactions'); toast(`Đã nhập ${selected.length} giao dịch`);
+});
 $('#export-year').addEventListener('click', () => exportCsv(annualReport(state, selectedYear).transactions, `moneynote-${selectedYear}.csv`));
 for (const dialog of $$('dialog')) dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
 window.addEventListener('hashchange', () => setView(location.hash.slice(1)));

@@ -1,9 +1,12 @@
-export function filterTransactions(state, { query = '', type = 'all', category = 'all', period = 'all', month = '', from = '', to = '' }) {
+import { effectiveMonthlyBudget } from './finance.js';
+
+export function filterTransactions(state, { query = '', type = 'all', category = 'all', account = 'all', period = 'all', month = '', from = '', to = '' }) {
   const text = query.trim().toLocaleLowerCase('vi');
   const names = new Map(state.categories.map((item) => [item.id, item.name]));
   return state.transactions.filter((item) => {
     if (type !== 'all' && item.type !== type) return false;
     if (category !== 'all' && item.categoryId !== category) return false;
+    if (account !== 'all' && (item.accountId || 'wallet-default') !== account) return false;
     if (period === 'month' && item.date.slice(0, 7) !== month) return false;
     if (period === 'range' && ((from && item.date < from) || (to && item.date > to))) return false;
     return !text || `${item.note || ''} ${names.get(item.categoryId) || ''}`.toLocaleLowerCase('vi').includes(text);
@@ -77,7 +80,8 @@ export function budgetComparison(state, month) {
   const expenses = state.transactions.filter((item) => item.type === 'expense' && item.date.slice(0, 7) === month);
   const totalSpent = expenses.reduce((sum, item) => sum + item.amount, 0);
   const rows = [];
-  if (Number(budget.total) > 0) rows.push({ id: null, limit: Number(budget.total), spent: totalSpent });
+  const effective = effectiveMonthlyBudget(state, month).limit;
+  if (effective > 0) rows.push({ id: null, limit: effective, spent: totalSpent });
   for (const [id, value] of Object.entries(budget.categories || {})) {
     const limit = Number(value);
     if (limit > 0) rows.push({ id, limit, spent: expenses.filter((item) => item.categoryId === id).reduce((sum, item) => sum + item.amount, 0) });
@@ -94,7 +98,7 @@ export function budgetAlerts(state, month) {
     if (!Number.isSafeInteger(limit) || limit <= 0 || spent < limit * 0.8) return;
     alerts.push({ scope, categoryId, limit, spent, percent: Math.round(spent / limit * 100), level: spent >= limit ? 'danger' : 'warning' });
   };
-  check('total', '', Number(budget.total), expenses.reduce((total, item) => total + item.amount, 0));
+  check('total', '', effectiveMonthlyBudget(state, month).limit, expenses.reduce((total, item) => total + item.amount, 0));
   for (const [categoryId, limit] of Object.entries(budget.categories || {})) {
     check('category', categoryId, Number(limit), expenses.filter((item) => item.categoryId === categoryId).reduce((total, item) => total + item.amount, 0));
   }
