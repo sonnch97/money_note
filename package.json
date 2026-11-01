@@ -1,6 +1,6 @@
 {
   "name": "moneynote",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "PWA quản lý thu chi cá nhân, chạy trên Android và trình duyệt Windows.",
   "scripts": {
     "test": "node --test",
@@ -19,7 +19,9 @@
   },
   "homepage": "https://github.com/sonnch97/money_note#readme",
   "dependencies": {
-    "@supabase/supabase-js": "2.118.0"
+    "@supabase/supabase-js": "2.118.0",
+    "@tesseract.js-data/vie": "^1.0.0",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "esbuild": "0.28.2"

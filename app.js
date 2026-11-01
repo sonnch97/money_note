@@ -1,3 +1,4 @@
+import { setupImageAmount, resetImageAmount } from './image-amount-ui.js';
 import { createBackup, parseBackup } from './backup.js';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './sync-config.js';
 import { MoneyNoteSync, diffRecords, LOCAL_DIRTY_KEY } from './sync.js';
@@ -505,6 +506,7 @@ function setTransactionType(type, selectedId = '') {
 }
 
 function openTransaction(id = '', preset = null) {
+  resetImageAmount();
   $('#transaction-form').reset();
   $('#transaction-id').value = id;
   $('#transaction-date').value = selectedMonth === currentMonth() ? todayLocal() : `${selectedMonth}-01`;
@@ -1121,3 +1123,5 @@ window.addEventListener('load', () => {
   if (location.hash) window.scrollTo(0, 0);
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {});
 });
+
+setupImageAmount();
